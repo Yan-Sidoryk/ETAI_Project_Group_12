@@ -1,0 +1,15 @@
+seed: 42
+
+paths:
+  train: data/train.csv
+  test: data/test.csv
+  clients: data/clientes.csv
+  sample_submission: data/sample_submission.csv
+  models_dir: models
+  outputs_dir: outputs
+
+targets:
+  classification: repeat_purchase_90d
+  regression: spend_next_90d
+
+id_col: ID
