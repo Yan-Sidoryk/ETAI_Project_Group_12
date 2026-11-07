@@ -1,4 +1,9 @@
-pandas
-numpy
-scikit-learn
-pyyaml
+# Tested with Python 3.12
+pandas==3.1.1
+numpy==2.5.4
+scikit-learn==1.9.1
+scipy==1.18.1
+PyYAML==6.0.3
+matplotlib==3.11.2
+seaborn==0.13.2
+jupyter==1.1.1

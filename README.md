@@ -17,6 +17,8 @@ config.yaml  paths, seed, models, hyperparameters
 
 ## Setup
 
+Requires Python 3.12.
+
 macOS / Linux:
 ```bash
 python3 -m venv .venv
