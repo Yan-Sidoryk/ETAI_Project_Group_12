@@ -99,3 +99,55 @@ ranges:
   random_noise:
     min: null
     max: null
+
+sentinels:
+  prior_mean_purchase_value:
+    min_inclusive: 1.0e+8
+  spend_365d:
+    min_inclusive: 1.0e+8
+
+consistency:
+  spend_365d_exceeds_prior_total:
+    violation: "spend_365d > prior_total_spend + 0.01"
+    where: "0 <= spend_365d and spend_365d < 1.0e+8"
+
+  spend_180d_exceeds_spend_365d:
+    violation: "spend_180d > spend_365d + 0.01"
+    where: "spend_180d >= 0 and spend_365d >= 0 and spend_365d < 1.0e+8"
+
+  prior_max_exceeds_prior_total:
+    violation: "prior_max_purchase_value > prior_total_spend + 0.01"
+
+  prior_mean_differs_from_total_divided_by_count:
+    violation: "abs(prior_total_spend / prior_purchase_count - prior_mean_purchase_value) > 0.01"
+    where: "prior_purchase_count > 0 and prior_mean_purchase_value >= 0 and prior_mean_purchase_value < 1.0e+8"
+
+  prior_min_exceeds_prior_max:
+    violation: "prior_min_purchase_value > prior_max_purchase_value"
+
+  count_30d_exceeds_count_90d:
+    violation: "purchase_count_30d > purchase_count_90d"
+
+  count_90d_exceeds_count_180d:
+    violation: "purchase_count_90d > purchase_count_180d"
+
+  count_180d_exceeds_count_365d:
+    violation: "purchase_count_180d > purchase_count_365d"
+
+  count_365d_exceeds_prior_purchase_count:
+    violation: "purchase_count_365d > prior_purchase_count"
+
+  spend_30d_exceeds_spend_90d:
+    violation: "spend_30d > spend_90d + 0.01"
+
+  spend_90d_exceeds_spend_180d:
+    violation: "spend_90d > spend_180d + 0.01"
+
+  days_since_previous_exceeds_tenure:
+    violation: "days_since_previous_purchase > customer_tenure_days"
+
+  total_liquido_differs_from_discounted_bruto:
+    violation: "abs(`Total Liquido` - (`Total Bruto` - `Total Desc_ Linha` - `Total Desc_ Global`)) > 0.02"
+
+  custo_exceeds_total_liquido:
+    violation: "Custo > `Total Liquido`"
