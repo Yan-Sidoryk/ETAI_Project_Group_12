@@ -12,4 +12,6 @@ targets:
   classification: repeat_purchase_90d
   regression: spend_next_90d
 
-id_col: ID
+id_cols:
+  - ID
+  - customer_id
