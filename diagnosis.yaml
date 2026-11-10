@@ -1,0 +1,101 @@
+# Allowed ranges (inclusive). null means no defined bound.
+ranges:
+  Total a Pagar:
+    min: 0
+    max: null
+  Total Bruto:
+    min: 0
+    max: null
+  Total Liquido:
+    min: 0
+    max: null
+  Total Imp_:
+    min: 0
+    max: null
+  Total Portes:
+    min: 0
+    max: null
+  Total Desc_ Global:
+    min: 0
+    max: null
+  Total Desc_ Linha:
+    min: 0
+    max: null
+  Custo:
+    min: 0
+    max: null
+  N_ Detalhes:
+    min: 1
+    max: null
+  invoice_count_current_purchase:
+    min: 1
+    max: null
+  repeat_purchase_90d:
+    min: 0
+    max: 1
+  spend_next_90d:
+    min: 0
+    max: null
+  days_since_previous_purchase:
+    min: 0
+    max: null
+  customer_tenure_days:
+    min: 0
+    max: null
+  prior_purchase_count:
+    min: 0
+    max: null
+  prior_total_spend:
+    min: 0
+    max: null
+  prior_mean_purchase_value:
+    min: 0
+    max: null
+  prior_std_purchase_value:
+    min: 0
+    max: null
+  prior_min_purchase_value:
+    min: 0
+    max: null
+  prior_max_purchase_value:
+    min: 0
+    max: null
+  prior_mean_gap_days:
+    min: 0
+    max: null
+  prior_std_gap_days:
+    min: 0
+    max: null
+  purchase_count_30d:
+    min: 0
+    max: null
+  spend_30d:
+    min: 0
+    max: null
+  purchase_count_90d:
+    min: 0
+    max: null
+  spend_90d:
+    min: 0
+    max: null
+  purchase_count_180d:
+    min: 0
+    max: null
+  spend_180d:
+    min: 0
+    max: null
+  purchase_count_365d:
+    min: 0
+    max: null
+  spend_365d:
+    min: 0
+    max: null
+  customer_id:
+    min: null
+    max: null
+  ID:
+    min: null
+    max: null
+  random_noise:
+    min: null
+    max: null
