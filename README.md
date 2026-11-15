@@ -49,6 +49,8 @@ pip install -r requirements.txt
 From the repo root, with the environment active (or prefix each command with `uv run`). The commands are the same on
 Mac and Windows. Saved models are not in the repository, so run the two `train` commands first, in either order:
 ```bash
+python main.py compare --task classification # optional: cross-validates every model in config.yaml
+python main.py compare --task regression
 python main.py train --task classification   # saves models/classifier.joblib
 python main.py train --task regression       # saves models/regressor.joblib
 python main.py predict                       # needs both models
@@ -63,6 +65,9 @@ python main.py client --input examples/returning_customer.json   # one purchase,
 of buying again, the decision and the expected 90-day spend (0 when the decision is "does not return").
 Any field can be left out; for a new customer, leave out the history fields and `customer_id`,
 as in `examples/new_customer.json`.
+
+`compare` prints one table per task, best model first, and saves it to `outputs/comparison_<task>.csv`.
+`train` saves the model named by `classification.model` / `regression.model` in `config.yaml`.
 
 Each `train` run prints its cross-validation and hold-out scores against the floor model and adds a row to `outputs/runs.csv`.
 Models, metrics and the threshold are set in `config.yaml`; no code edits are needed.

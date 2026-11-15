@@ -1,6 +1,8 @@
 """
 Entry point. Run from the repository root:
 
+    python main.py compare --task classification
+    python main.py compare --task regression
     python main.py train --task classification
     python main.py train --task regression
     python main.py predict
@@ -10,6 +12,7 @@ Entry point. Run from the repository root:
 import argparse
 import json
 import os
+import time
 from datetime import datetime
 
 import joblib
@@ -21,7 +24,7 @@ from src.cleaning import drop_empty_rows
 from src.data import load_config, load_raw
 from src.evaluate import build_scorer, cross_validate_pipeline, cv_report, make_cv, split_holdout
 from src.features import prepare, split_features_target
-from src.model import FLOOR, build_pipeline
+from src.model import FLOOR, build_pipeline, configured_model
 from src.results import save_run, save_scores
 
 MODEL_FILES = {"classification": "classifier.joblib", "regression": "regressor.joblib"}
@@ -40,6 +43,54 @@ def with_observed_spend(rows, config: dict):
     return rows[rows[config["targets"]["regression"]].notna()]
 
 
+def load_splits(config: dict, task: str):
+    """
+    Returns (all rows, development rows, hold-out rows) for `task`. The time cut is the same for
+    both tasks; the regressor then keeps only the purchases with an observed spend, which are
+    all returners (non-returners have no spend to learn from).
+    """
+    rows = load_training_rows(config)
+    validation = config["validation"]
+    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    if task == "regression":
+        rows, dev, holdout = (with_observed_spend(part, config) for part in (rows, dev, holdout))
+    return rows, dev, holdout
+
+
+def compare(args):
+    """
+    Cross-validates the floor and every model in config[task]["models"] on the development rows,
+    with the same time-ordered folds, and prints them from best to worst. The hold-out is not
+    touched, so this table can be used to choose config[task]["model"].
+    """
+    task = args.task
+    config = load_config()
+    task_config = config[task]
+    metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
+    _, dev, _ = load_splits(config, task)
+    X_dev, y_dev = split_features_target(dev, config, task)
+    cv, score = make_cv(config), build_scorer(task, metrics, task_config.get("threshold"))
+
+    candidates = {"floor": FLOOR[task], **{name: configured_model(config, task, name) for name in task_config["models"]}}
+    table = []
+    for name, model_config in candidates.items():
+        start = time.perf_counter()
+        folds = cross_validate_pipeline(build_pipeline(task, config, model_config), X_dev, y_dev, cv, score, selection_metric)
+        table.append({"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
+                      "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start})
+        print(f"  {name}: {selection_metric} = {folds['validation'].mean():.3f}")
+    lower_is_better = task == "regression"            # errors in EUR; classification metrics are scores
+    table = pd.DataFrame(table).sort_values(selection_metric, ascending=lower_is_better)
+
+    path = os.path.join(config["paths"]["outputs_dir"], f"comparison_{task}.csv")
+    os.makedirs(config["paths"]["outputs_dir"], exist_ok=True)
+    table.to_csv(path, index=False)
+    print(f"\n{task}: mean over {cv.get_n_splits()} time-ordered folds of {len(dev)} development rows, best first\n")
+    print(table.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print(f"\nSaved: {path}   |   `train` saves the model named by {task}.model in config.yaml "
+          f"(now: {task_config['model']})")
+
+
 def train(args):
     """
     raw data -> cleaned rows -> hold-out set aside -> cross-validation of the no-model floor and
@@ -50,16 +101,12 @@ def train(args):
     config = load_config()
     task_config = config[task]
     metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
-    model_type = task_config["model"]["type"]
+    model_type = task_config["model"]
+    model_params = configured_model(config, task).get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    rows = load_training_rows(config)
+    rows, dev, holdout = load_splits(config, task)
     validation = config["validation"]
-    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
-    if task == "regression":
-        # Same time cut as the classifier; the regressor then learns only from purchases with an
-        # observed spend, which are all returners (non-returners have no spend to learn from).
-        rows, dev, holdout = (with_observed_spend(part, config) for part in (rows, dev, holdout))
     X_dev, y_dev = split_features_target(dev, config, task)
     X_holdout, y_holdout = split_features_target(holdout, config, task)
     print(f"Task: {task}   |   model: {model_type}   |   selection metric: {selection_metric}")
@@ -102,13 +149,13 @@ def train(args):
                  "features": list(X_all.columns), "config": config, "run": run}, model_path)
 
     save_scores(config["outputs"]["scoreboard"], {
-        "run": run, "task": task, "model": model_type, "params": str(task_config["model"].get("params")),
+        "run": run, "task": task, "model": model_type, "params": str(model_params),
         "threshold": threshold, "metric": selection_metric, "cv_mean": cv_mean, "cv_std": cv_std,
         "floor": floor_mean, "holdout": holdout_scores[selection_metric],
         **{f"fold_{i}": v for i, v in enumerate(fold_scores["validation"], start=1)},
     })
     report = "\n\n".join([
-        f"Run: {run}\nTask: {task}\nModel: {model_type}  params={task_config['model'].get('params')}\n"
+        f"Run: {run}\nTask: {task}\nModel: {model_type}  params={model_params}\n"
         f"Preprocessing: {config['preprocessing']}\nThreshold: {threshold}",
         cv_report(floor_scores, metrics, selection_metric, "Floor"),
         cv_report(fold_scores, metrics, selection_metric, "Cross-validation"),
@@ -165,9 +212,9 @@ def predict(args):
     os.makedirs(os.path.dirname(outputs["submission"]) or ".", exist_ok=True)
     submission.to_csv(outputs["submission"], index=False)
     returners.to_csv(outputs["regression_predictions"], index=False)
-    print(f"Classifier: {classifier['config']['classification']['model']['type']} "
+    print(f"Classifier: {classifier['config']['classification']['model']} "
           f"(run {classifier['run']}, threshold {classifier['threshold']})")
-    print(f"Regressor:  {regressor['config']['regression']['model']['type']} (run {regressor['run']})")
+    print(f"Regressor:  {regressor['config']['regression']['model']} (run {regressor['run']})")
     print(f"Kaggle submission:      {outputs['submission']}  "
           f"({len(submission)} rows, {decision.mean():.1%} predicted to return)")
     print(f"Regression predictions: {outputs['regression_predictions']}  "
@@ -213,6 +260,10 @@ def client(args):
 def main():
     parser = argparse.ArgumentParser(description="Repeat-purchase and 90-day spend pipeline.")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    p = commands.add_parser("compare", help="cross-validate every configured model of one task")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.set_defaults(run=compare)
 
     p = commands.add_parser("train", help="train one task from the raw data and save the model")
     p.add_argument("--task", required=True, choices=["classification", "regression"])
