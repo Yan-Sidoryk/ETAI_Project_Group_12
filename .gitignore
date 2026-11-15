@@ -10,3 +10,6 @@ models/*
 outputs/*
 !models/.gitkeep
 !outputs/.gitkeep
+
+#
+planning/

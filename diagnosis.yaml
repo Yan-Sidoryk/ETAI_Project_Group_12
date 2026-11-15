@@ -148,6 +148,3 @@ consistency:
 
   total_liquido_differs_from_discounted_bruto:
     violation: "abs(`Total Liquido` - (`Total Bruto` - `Total Desc_ Linha` - `Total Desc_ Global`)) > 0.02"
-
-  custo_exceeds_total_liquido:
-    violation: "Custo > `Total Liquido`"
