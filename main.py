@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 
 import joblib
+import numpy as np
 from sklearn.base import clone
 
 from src.cleaning import drop_empty_rows
@@ -31,6 +32,11 @@ def load_training_rows(config: dict):
     return prepare(drop_empty_rows(train_raw, feature_cols), clients, config)
 
 
+def with_observed_spend(rows, config: dict):
+    """The rows whose 90-day spend is known: the only rows a spend model can learn from or be scored on."""
+    return rows[rows[config["targets"]["regression"]].notna()]
+
+
 def train(args):
     """
     raw data -> cleaned rows -> hold-out set aside -> cross-validation of the no-model floor and
@@ -38,9 +44,6 @@ def train(args):
     training row -> saved model + scoreboard row + full report.
     """
     task = args.task
-    if task == "regression":
-        raise SystemExit("train --task regression is not built yet")
-
     config = load_config()
     task_config = config[task]
     metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
@@ -50,6 +53,10 @@ def train(args):
     rows = load_training_rows(config)
     validation = config["validation"]
     dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    if task == "regression":
+        # Same time cut as the classifier; the regressor then learns only from purchases with an
+        # observed spend, which are all returners (non-returners have no spend to learn from).
+        rows, dev, holdout = (with_observed_spend(part, config) for part in (rows, dev, holdout))
     X_dev, y_dev = split_features_target(dev, config, task)
     X_holdout, y_holdout = split_features_target(holdout, config, task)
     print(f"Task: {task}   |   model: {model_type}   |   selection metric: {selection_metric}")
@@ -58,7 +65,8 @@ def train(args):
 
     # Every choice is made on the development rows only, by time-ordered cross-validation.
     cv = make_cv(config)
-    score = build_scorer(metrics, task_config["threshold"])
+    threshold = task_config.get("threshold")                    # classification only
+    score = build_scorer(task, metrics, threshold)
     pipeline = build_pipeline(task, config)
     floor_pipeline = build_pipeline(task, config, FLOOR[task])
     floor_scores = cross_validate_pipeline(floor_pipeline, X_dev, y_dev, cv, score, selection_metric)
@@ -87,18 +95,18 @@ def train(args):
     pipeline.fit(X_all, y_all)
     model_path = os.path.join(config["paths"]["models_dir"], MODEL_FILES[task])
     os.makedirs(config["paths"]["models_dir"], exist_ok=True)
-    joblib.dump({"pipeline": pipeline, "threshold": task_config["threshold"],
+    joblib.dump({"pipeline": pipeline, "threshold": threshold,
                  "features": list(X_all.columns), "config": config, "run": run}, model_path)
 
     save_scores(config["outputs"]["scoreboard"], {
         "run": run, "task": task, "model": model_type, "params": str(task_config["model"].get("params")),
-        "threshold": task_config["threshold"], "metric": selection_metric, "cv_mean": cv_mean, "cv_std": cv_std,
+        "threshold": threshold, "metric": selection_metric, "cv_mean": cv_mean, "cv_std": cv_std,
         "floor": floor_mean, "holdout": holdout_scores[selection_metric],
         **{f"fold_{i}": v for i, v in enumerate(fold_scores["validation"], start=1)},
     })
     report = "\n\n".join([
         f"Run: {run}\nTask: {task}\nModel: {model_type}  params={task_config['model'].get('params')}\n"
-        f"Preprocessing: {config['preprocessing']}\nThreshold: {task_config['threshold']}",
+        f"Preprocessing: {config['preprocessing']}\nThreshold: {threshold}",
         cv_report(floor_scores, metrics, selection_metric, "Floor"),
         cv_report(fold_scores, metrics, selection_metric, "Cross-validation"),
         summary,
@@ -127,20 +135,40 @@ def classify(model: dict, purchases, clients):
     return proba, (proba >= model["threshold"]).astype(int)
 
 
+def predict_spend(model: dict, purchases, clients):
+    """Expected 90-day spend (EUR, never negative) for raw purchase rows, assuming the customer returns."""
+    X, _ = split_features_target(prepare(purchases, clients, model["config"]), model["config"], "regression")
+    return np.clip(model["pipeline"].predict(X[model["features"]]), 0, None).round(2)
+
+
 def predict(args):
-    """test.csv -> outputs/submission.csv (ID, repeat_purchase_90d), with the saved classifier."""
+    """
+    test.csv, with the two saved models ->
+      outputs/submission.csv              ID, repeat_purchase_90d                  every test row
+      outputs/regression_predictions.csv  ID, repeat_purchase_90d, spend_next_90d  rows predicted to return
+    The two files cannot disagree: a spend is written only where the classifier says 1.
+    """
     config = load_config()
-    classifier = load_model(config, "classification")
+    classifier, regressor = load_model(config, "classification"), load_model(config, "regression")
     _, test, clients = load_raw(config)
+    clf_target, reg_target = config["targets"]["classification"], config["targets"]["regression"]
 
     _, decision = classify(classifier, test, clients)
-    submission = test[["ID"]].assign(**{config["targets"]["classification"]: decision})
-    path = config["outputs"]["submission"]
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    submission.to_csv(path, index=False)
+    submission = test[["ID"]].assign(**{clf_target: decision})
+    spend = predict_spend(regressor, test, clients)
+    returners = submission[decision == 1].assign(**{reg_target: spend[decision == 1]})
+
+    outputs = config["outputs"]
+    os.makedirs(os.path.dirname(outputs["submission"]) or ".", exist_ok=True)
+    submission.to_csv(outputs["submission"], index=False)
+    returners.to_csv(outputs["regression_predictions"], index=False)
     print(f"Classifier: {classifier['config']['classification']['model']['type']} "
           f"(run {classifier['run']}, threshold {classifier['threshold']})")
-    print(f"Kaggle submission: {path}  ({len(submission)} rows, {decision.mean():.1%} predicted to return)")
+    print(f"Regressor:  {regressor['config']['regression']['model']['type']} (run {regressor['run']})")
+    print(f"Kaggle submission:      {outputs['submission']}  "
+          f"({len(submission)} rows, {decision.mean():.1%} predicted to return)")
+    print(f"Regression predictions: {outputs['regression_predictions']}  "
+          f"({len(returners)} rows, median spend {returners[reg_target].median():,.2f} EUR)")
 
 
 def client(args):

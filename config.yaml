@@ -53,6 +53,16 @@ classification:
     type: logistic_regression  # dummy | logistic_regression
     params: {max_iter: 2000}
 
+regression:
+  metrics: [rmse, mae, r2]     # measured in EUR, on customers who really returned
+  selection_metric: rmse       # lower is better; must be one of metrics
+  model:
+    type: ridge                # dummy | ridge
+    params: {alpha: 1.0}
+    # true = fit on log(1 + spend) and convert predictions back to EUR. Off for ridge: a linear
+    # model on the raw, skewed features gives a few huge predictions once converted back.
+    log_target: false
+
 outputs:
   submission: outputs/submission.csv
   regression_predictions: outputs/regression_predictions.csv

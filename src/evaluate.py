@@ -5,7 +5,8 @@ is ordered by purchase date: models are always fitted on the past and scored on 
 import pandas as pd
 from sklearn.base import clone
 from sklearn.metrics import (accuracy_score, average_precision_score, balanced_accuracy_score, f1_score,
-                             precision_score, recall_score, roc_auc_score)
+                             mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score,
+                             root_mean_squared_error)
 from sklearn.model_selection import TimeSeriesSplit
 
 
@@ -39,17 +40,28 @@ _METRICS = {
 }
 
 
-def build_scorer(metrics: list, threshold: float):
+# name -> function(y_true, predicted spend), in EUR except r2
+_REGRESSION_METRICS = {"rmse": root_mean_squared_error, "mae": mean_absolute_error, "r2": r2_score}
+
+
+def build_scorer(task: str, metrics: list, threshold: float = None):
     """
-    Returns score(model, X, y) -> {metric: value} for a fitted classifier. A row is labelled 1
-    when its predicted probability reaches `threshold`, so the label metrics (f1, precision,
-    recall, accuracy) are measured at the threshold the pipeline really uses.
+    Returns score(model, X, y) -> {metric: value} for a fitted model.
+
+    Classification: a row is labelled 1 when its predicted probability reaches `threshold`, so
+    the label metrics (f1, precision, recall, accuracy) are measured at the threshold the
+    pipeline really uses. Regression: the predicted spend is compared with the observed spend.
     """
-    def score(model, X, y) -> dict:
+    def score_classifier(model, X, y) -> dict:
         proba = model.predict_proba(X)[:, 1]
         label = (proba >= threshold).astype(int)
         return {name: _METRICS[name](y, label, proba) for name in metrics}
-    return score
+
+    def score_regressor(model, X, y) -> dict:
+        spend = model.predict(X)
+        return {name: _REGRESSION_METRICS[name](y, spend) for name in metrics}
+
+    return score_regressor if task == "regression" else score_classifier
 
 
 def cross_validate_pipeline(pipeline, X, y, cv, score, selection_metric: str) -> pd.DataFrame:
