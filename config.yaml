@@ -32,9 +32,26 @@ validation:
   holdout_fraction: 0.2        # most recent rows, never used for any choice
   n_splits: 5                  # TimeSeriesSplit folds on the remaining rows
 
+preprocessing:
+  scaler: standard             # none | standard | minmax | robust
+  min_frequency: 20            # category levels with fewer training rows are grouped together
+  categorical_features:        # every other feature is treated as numeric
+    - payment_type
+    - salesperson
+    - commercial_zone
+    - transport_method
+    - warehouse
+    - document_series
+    - country_or_region
+    - commercial_region
+
 classification:
-  selection_metric: f1         # the Kaggle metric
-  threshold: 0.5
+  metrics: [f1, precision, recall, accuracy, roc_auc]
+  selection_metric: f1         # the Kaggle metric; must be one of metrics
+  threshold: 0.5               # probability from which a customer is predicted to return
+  model:
+    type: logistic_regression  # dummy | logistic_regression
+    params: {max_iter: 2000}
 
 outputs:
   submission: outputs/submission.csv
