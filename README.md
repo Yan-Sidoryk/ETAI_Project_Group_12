@@ -43,3 +43,19 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+
+## Running the pipeline
+
+From the repo root, with the environment active (or prefix each command with `uv run`):
+```bash
+python main.py train --task classification   # saves models/classifier.joblib
+python main.py train --task regression       # saves models/regressor.joblib
+python main.py predict                       # needs both models
+```
+
+`predict` writes two files:
+- `outputs/submission.csv`: the Kaggle file, one row per test purchase with `repeat_purchase_90d`.
+- `outputs/regression_predictions.csv`: predicted `spend_next_90d` for the purchases predicted to return.
+
+Each `train` run prints its cross-validation and hold-out scores against the floor model and adds a row to `outputs/runs.csv`.
+Models, metrics and the threshold are set in `config.yaml`; no code edits are needed.
