@@ -15,3 +15,28 @@ targets:
 id_cols:
   - ID
   - customer_id
+
+# Columns never used as model inputs (purchase_date is used only to order the splits).
+drop_columns:
+  - purchase_date
+  - random_noise
+
+# Columns taken from clientes.csv (joined on customer_id).
+client_columns:
+  - country_or_region
+  - commercial_region
+  - customer_since_year
+
+validation:
+  date_col: purchase_date
+  holdout_fraction: 0.2        # most recent rows, never used for any choice
+  n_splits: 5                  # TimeSeriesSplit folds on the remaining rows
+
+classification:
+  selection_metric: f1         # the Kaggle metric
+  threshold: 0.5
+
+outputs:
+  submission: outputs/submission.csv
+  regression_predictions: outputs/regression_predictions.csv
+  scoreboard: outputs/runs.csv

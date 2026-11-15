@@ -106,10 +106,18 @@ sentinels:
   spend_365d:
     min_inclusive: 1.0e+8
 
+# Negative values in these columns are the true value with the sign flipped (audit 4.2).
+abs_value:
+  - prior_mean_purchase_value
+  - spend_365d
+
+# A rule with `set_nan` is fixed by clean_dataset(): the listed columns become NaN on violating rows.
+# Rules without it are only reported.
 consistency:
   spend_365d_exceeds_prior_total:
     violation: "spend_365d > prior_total_spend + 0.01"
     where: "0 <= spend_365d and spend_365d < 1.0e+8"
+    set_nan: [spend_365d]
 
   spend_180d_exceeds_spend_365d:
     violation: "spend_180d > spend_365d + 0.01"
@@ -117,10 +125,12 @@ consistency:
 
   prior_max_exceeds_prior_total:
     violation: "prior_max_purchase_value > prior_total_spend + 0.01"
+    set_nan: [prior_max_purchase_value]
 
   prior_mean_differs_from_total_divided_by_count:
     violation: "abs(prior_total_spend / prior_purchase_count - prior_mean_purchase_value) > 0.01"
     where: "prior_purchase_count > 0 and prior_mean_purchase_value >= 0 and prior_mean_purchase_value < 1.0e+8"
+    set_nan: [prior_mean_purchase_value]
 
   prior_min_exceeds_prior_max:
     violation: "prior_min_purchase_value > prior_max_purchase_value"
@@ -148,3 +158,9 @@ consistency:
 
   total_liquido_differs_from_discounted_bruto:
     violation: "abs(`Total Liquido` - (`Total Bruto` - `Total Desc_ Linha` - `Total Desc_ Global`)) > 0.02"
+
+# Columns that can be rebuilt exactly from other columns, after the fixes above.
+recompute:
+  prior_mean_purchase_value:
+    value: "prior_total_spend / prior_purchase_count"
+    where: "prior_purchase_count > 0"
