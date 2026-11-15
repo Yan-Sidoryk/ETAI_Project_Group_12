@@ -46,7 +46,8 @@ pip install -r requirements.txt
 
 ## Running the pipeline
 
-From the repo root, with the environment active (or prefix each command with `uv run`):
+From the repo root, with the environment active (or prefix each command with `uv run`). The commands are the same on
+Mac and Windows. Saved models are not in the repository, so run the two `train` commands first, in either order:
 ```bash
 python main.py train --task classification   # saves models/classifier.joblib
 python main.py train --task regression       # saves models/regressor.joblib
@@ -65,3 +66,4 @@ as in `examples/new_customer.json`.
 
 Each `train` run prints its cross-validation and hold-out scores against the floor model and adds a row to `outputs/runs.csv`.
 Models, metrics and the threshold are set in `config.yaml`; no code edits are needed.
+Runs are reproducible: the seed is `seed` in `config.yaml`, and two runs from the raw data give identical output files.
