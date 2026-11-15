@@ -51,11 +51,17 @@ From the repo root, with the environment active (or prefix each command with `uv
 python main.py train --task classification   # saves models/classifier.joblib
 python main.py train --task regression       # saves models/regressor.joblib
 python main.py predict                       # needs both models
+python main.py client --input examples/returning_customer.json   # one purchase, needs both models
 ```
 
 `predict` writes two files:
 - `outputs/submission.csv`: the Kaggle file, one row per test purchase with `repeat_purchase_90d`.
 - `outputs/regression_predictions.csv`: predicted `spend_next_90d` for the purchases predicted to return.
+
+`client` reads one purchase from a JSON file whose fields are the columns of `data/test.csv`, and prints the probability
+of buying again, the decision and the expected 90-day spend (0 when the decision is "does not return").
+Any field can be left out; for a new customer, leave out the history fields and `customer_id`,
+as in `examples/new_customer.json`.
 
 Each `train` run prints its cross-validation and hold-out scores against the floor model and adds a row to `outputs/runs.csv`.
 Models, metrics and the threshold are set in `config.yaml`; no code edits are needed.

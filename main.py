@@ -4,14 +4,17 @@ Entry point. Run from the repository root:
     python main.py train --task classification
     python main.py train --task regression
     python main.py predict
+    python main.py client --input examples/returning_customer.json
     python main.py client --input examples/new_customer.json
 """
 import argparse
+import json
 import os
 from datetime import datetime
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.base import clone
 
 from src.cleaning import drop_empty_rows
@@ -171,8 +174,40 @@ def predict(args):
           f"({len(returners)} rows, median spend {returners[reg_target].median():,.2f} EUR)")
 
 
+def score_purchase(record: dict, config: dict) -> dict:
+    """
+    One purchase, as {column of test.csv: value} -> probability of returning, 0/1 decision and
+    expected 90-day spend. Fields that are left out are treated as unknown. A purchase without
+    `prior_purchase_count` is a first purchase: its history counts and totals are 0, as they
+    are for the first purchases in the training file. The spend is 0 when the decision is 0.
+    """
+    classifier, regressor = load_model(config, "classification"), load_model(config, "regression")
+    _, test, clients = load_raw(config)
+    unknown = sorted(set(record) - set(test.columns))
+    if unknown:
+        raise SystemExit(f"Unknown fields: {unknown}. Allowed fields: {list(test.columns)}")
+
+    record = {name: value for name, value in record.items() if value is not None}
+    if "prior_purchase_count" not in record:
+        no_history = [c for c in test.columns if c.startswith(("purchase_count_", "spend_"))]
+        no_history += ["prior_purchase_count", "prior_total_spend", "customer_tenure_days"]
+        record = {**dict.fromkeys(no_history, 0), **record}
+    numeric = pd.api.types.is_numeric_dtype
+    purchase = pd.DataFrame([record]).reindex(columns=test.columns).astype(
+        {name: float if numeric(dtype) else dtype for name, dtype in test.dtypes.items()})
+
+    proba, decision = classify(classifier, purchase, clients)
+    spend = predict_spend(regressor, purchase, clients)[0] if decision[0] == 1 else 0.0
+    return {"probability": float(proba[0]), "decision": int(decision[0]), "spend": float(spend)}
+
+
 def client(args):
-    raise SystemExit("client is not built yet")
+    """Prints the prediction for the purchase in the JSON file `--input`."""
+    with open(args.input, encoding="utf-8") as f:
+        result = score_purchase(json.load(f), load_config())
+    print(f"Probability of buying again within 90 days: {result['probability']:.1%}")
+    print(f"Decision: {'returns' if result['decision'] else 'does not return'} ({result['decision']})")
+    print(f"Expected spend in the next 90 days: {result['spend']:,.2f} EUR")
 
 
 def main():
