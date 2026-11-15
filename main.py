@@ -109,8 +109,38 @@ def train(args):
     print(f"Full report: {report_path}")
 
 
+def load_model(config: dict, task: str) -> dict:
+    """The model saved by `train --task <task>`. Predicting never trains, so a missing file stops here."""
+    path = os.path.join(config["paths"]["models_dir"], MODEL_FILES[task])
+    if not os.path.exists(path):
+        raise SystemExit(f"No saved model at {path}. Run first: python main.py train --task {task}")
+    return joblib.load(path)
+
+
+def classify(model: dict, purchases, clients):
+    """
+    Returns (probability of returning, 0/1 decision) for raw purchase rows. The rows are prepared
+    with the settings saved in the model, so they get exactly the treatment the training rows got.
+    """
+    X, _ = split_features_target(prepare(purchases, clients, model["config"]), model["config"], "classification")
+    proba = model["pipeline"].predict_proba(X[model["features"]])[:, 1]
+    return proba, (proba >= model["threshold"]).astype(int)
+
+
 def predict(args):
-    raise SystemExit("predict is not built yet")
+    """test.csv -> outputs/submission.csv (ID, repeat_purchase_90d), with the saved classifier."""
+    config = load_config()
+    classifier = load_model(config, "classification")
+    _, test, clients = load_raw(config)
+
+    _, decision = classify(classifier, test, clients)
+    submission = test[["ID"]].assign(**{config["targets"]["classification"]: decision})
+    path = config["outputs"]["submission"]
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    submission.to_csv(path, index=False)
+    print(f"Classifier: {classifier['config']['classification']['model']['type']} "
+          f"(run {classifier['run']}, threshold {classifier['threshold']})")
+    print(f"Kaggle submission: {path}  ({len(submission)} rows, {decision.mean():.1%} predicted to return)")
 
 
 def client(args):
