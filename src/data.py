@@ -12,15 +12,13 @@ def load_config(path: str = "config.yaml", diagnosis_path: str = "diagnosis.yaml
     return config
 
 
-def load_raw(config: dict):
-    """Returns (train, test, clients) exactly as stored in the CSVs."""
-    paths = config["paths"]
-    return pd.read_csv(paths["train"]), pd.read_csv(paths["test"]), pd.read_csv(paths["clients"])
+def load_data(config: dict, dataset: str = "train"):
+    """Return raw purchase rows and customer records as (purchases, clients).
 
-
-def join_clients(df: pd.DataFrame, clients: pd.DataFrame, columns: list) -> pd.DataFrame:
+    `dataset` selects the "train" or "test" path in the configuration. Only that
+    purchase file and the customer file are read, so inference does not need the
+    training CSV. Cleaning, feature preparation and splitting happen in the route.
     """
-    Adds the customer-level `columns` to every purchase row (left join on customer_id).
-    Row count and order are kept; a customer missing from `clients` gets NaN.
-    """
-    return df.merge(clients[["customer_id"] + columns], on="customer_id", how="left")
+    purchases = pd.read_csv(config["paths"][dataset])
+    clients = pd.read_csv(config["paths"]["clients"])
+    return purchases, clients

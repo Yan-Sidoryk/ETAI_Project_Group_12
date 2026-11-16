@@ -44,6 +44,20 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Reading the code
+
+Start with `main.py`: its only four functions are `compare`, `train`, `predict`
+and `client`. Each route shows its steps directly, from loading inputs to saving
+or printing results. The command-line dispatcher is at the bottom of the file.
+
+Shared cleaning, feature preparation, model construction, evaluation and inference
+live in `src/`. See [AGENTS.md](AGENTS.md) for the flow, module responsibilities
+and current limitations. To run the integration checks with temporary artifacts:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Running the pipeline
 
 From the repo root, with the environment active (or prefix each command with `uv run`). The commands are the same on

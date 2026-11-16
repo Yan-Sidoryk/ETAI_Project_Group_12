@@ -49,7 +49,7 @@ classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1 # the Kaggle metric; must be one of metrics
   threshold: 0.5 # probability from which a customer is predicted to return
-  model: random_forest # the one that `train` saves; must be a name in models
+  model: xgboost # the one that `train` saves; must be a name in models
   models: # every model that `compare` cross-validates, with its params
     logistic_regression: { params: { max_iter: 2000 } }
     random_forest: { params: { n_estimators: 300, min_samples_leaf: 5 } }

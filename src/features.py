@@ -8,22 +8,20 @@ encoding, scaling) belongs in the model Pipeline instead.
 import pandas as pd
 
 from src.cleaning import clean_dataset
-from src.data import join_clients
-
-
-def add_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds the engineered features. New features go here and nowhere else."""
-    out = df.copy()
-    out["is_first_purchase"] = (out["prior_purchase_count"] == 0).astype(int)
-    out["purchase_month"] = pd.to_datetime(out["purchase_date"]).dt.month
-    return out
 
 
 def prepare(df: pd.DataFrame, clients: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Raw purchase rows -> cleaned rows with the customer columns and the engineered features."""
+    """Clean purchases, join customer attributes, and add row-local features.
+
+    This preparation learns nothing from the data and preserves purchase rows.
+    Imputation, encoding and scaling are fitted separately inside the pipeline.
+    """
     out = clean_dataset(df, config["diagnosis"])
-    out = join_clients(out, clients, config["client_columns"])
-    return add_features(out)
+    client_columns = ["customer_id"] + config["client_columns"]
+    out = out.merge(clients[client_columns], on="customer_id", how="left")
+    out["is_first_purchase"] = (out["prior_purchase_count"] == 0).astype(int)
+    out["purchase_month"] = pd.to_datetime(out["purchase_date"]).dt.month
+    return out
 
 
 def split_features_target(df: pd.DataFrame, config: dict, task: str):
