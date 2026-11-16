@@ -16,47 +16,20 @@ import time
 from datetime import datetime
 
 import joblib
-import numpy as np
 import pandas as pd
 from sklearn.base import clone
+from sklearn.model_selection import TimeSeriesSplit
 
 from src.cleaning import drop_empty_rows
-from src.data import load_config, load_raw
-from src.evaluate import build_scorer, cross_validate_pipeline, cv_report, make_cv, split_holdout
+from src.data import load_config, load_data
+from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout
 from src.features import prepare, split_features_target
-from src.model import FLOOR, build_pipeline, configured_model
+from src.inference import MODEL_FILES, classify, load_model, predict_spend
+from src.model import FLOOR, build_pipeline
 from src.results import save_run, save_scores
 
-MODEL_FILES = {"classification": "classifier.joblib", "regression": "regressor.joblib"}
 
-
-def load_training_rows(config: dict):
-    """The training file, without its empty rows, cleaned and with every feature added."""
-    train_raw, _, clients = load_raw(config)
-    not_features = config["id_cols"] + list(config["targets"].values())
-    feature_cols = [c for c in train_raw.columns if c not in not_features]
-    return prepare(drop_empty_rows(train_raw, feature_cols), clients, config)
-
-
-def with_observed_spend(rows, config: dict):
-    """The rows whose 90-day spend is known: the only rows a spend model can learn from or be scored on."""
-    return rows[rows[config["targets"]["regression"]].notna()]
-
-
-def load_splits(config: dict, task: str):
-    """
-    Returns (all rows, development rows, hold-out rows) for `task`. The time cut is the same for
-    both tasks; the regressor then keeps only the purchases with an observed spend, which are
-    all returners (non-returners have no spend to learn from).
-    """
-    rows = load_training_rows(config)
-    validation = config["validation"]
-    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
-    if task == "regression":
-        rows, dev, holdout = (with_observed_spend(part, config) for part in (rows, dev, holdout))
-    return rows, dev, holdout
-
-
+# Route 1: compare candidates on development data
 def compare(args):
     """
     Cross-validates the floor and every model in config[task]["models"] on the development rows,
@@ -67,20 +40,38 @@ def compare(args):
     config = load_config()
     task_config = config[task]
     metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
-    _, dev, _ = load_splits(config, task)
-    X_dev, y_dev = split_features_target(dev, config, task)
-    cv, score = make_cv(config), build_scorer(task, metrics, task_config.get("threshold"))
 
-    candidates = {"floor": FLOOR[task], **{name: configured_model(config, task, name) for name in task_config["models"]}}
+    # Load and prepare training purchases; never remove rows during inference.
+    train_raw, clients = load_data(config, "train")
+    excluded = config["id_cols"] + list(config["targets"].values())
+    feature_columns = [column for column in train_raw.columns if column not in excluded]
+    rows = drop_empty_rows(train_raw, feature_columns)
+    rows = prepare(rows, clients, config)
+
+    # Set the common time boundary before filtering unknown regression targets.
+    validation = config["validation"]
+    dev, _ = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    if task == "regression":
+        target = config["targets"]["regression"]
+        dev = dev.loc[dev[target].notna()]
+
+    X_dev, y_dev = split_features_target(dev, config, task)
+    cv = TimeSeriesSplit(n_splits=validation["n_splits"])
+
+    candidates = {"floor": FLOOR[task]}
+    for name, settings in task_config["models"].items():
+        candidates[name] = {"type": name, **settings}
     table = []
     for name, model_config in candidates.items():
         start = time.perf_counter()
-        folds = cross_validate_pipeline(build_pipeline(task, config, model_config), X_dev, y_dev, cv, score, selection_metric)
+        pipeline = build_pipeline(task, config, model_config)
+        folds = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, task, task_config)
         table.append({"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
                       "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start})
         print(f"  {name}: {selection_metric} = {folds['validation'].mean():.3f}")
     lower_is_better = task == "regression"            # errors in EUR; classification metrics are scores
-    table = pd.DataFrame(table).sort_values(selection_metric, ascending=lower_is_better)
+    table = pd.DataFrame(table)
+    table = table.sort_values(selection_metric, ascending=lower_is_better)
 
     path = os.path.join(config["paths"]["outputs_dir"], f"comparison_{task}.csv")
     os.makedirs(config["paths"]["outputs_dir"], exist_ok=True)
@@ -91,30 +82,39 @@ def compare(args):
           f"(now: {task_config['model']})")
 
 
+# Route 2: evaluate, refit and save one selected model
 def train(args):
     """
     raw data -> cleaned rows -> hold-out set aside -> cross-validation of the no-model floor and
     of the configured model on the development rows -> score on the hold-out -> refit on every
     training row -> saved model + scoreboard row + full report.
     """
-    task = args.task # Task can be "classification" or "regression"
+    task = args.task
     config = load_config()
     task_config = config[task]
-
-    # Fetching Config Params
     metrics = task_config["metrics"]
     selection_metric = task_config["selection_metric"]
     model_type = task_config["model"]
-
-    # Getting Model Params 
-    model_params = configured_model(config, task).get("params")
-
+    model_config = {"type": model_type, **task_config["models"][model_type]}
+    model_params = model_config.get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Load and prepare training purchases; never remove rows during inference.
+    train_raw, clients = load_data(config, "train")
+    excluded = config["id_cols"] + list(config["targets"].values())
+    feature_columns = [column for column in train_raw.columns if column not in excluded]
+    rows = drop_empty_rows(train_raw, feature_columns)
+    rows = prepare(rows, clients, config)
 
-    # Data Imported Here
-    rows, dev, holdout = load_splits(config, task)
+    # Set the common time boundary before filtering unknown regression targets.
     validation = config["validation"]
+    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    if task == "regression":
+        target = config["targets"]["regression"]
+        rows = rows.loc[rows[target].notna()]
+        dev = dev.loc[dev[target].notna()]
+        holdout = holdout.loc[holdout[target].notna()]
+
     X_dev, y_dev = split_features_target(dev, config, task)
     X_holdout, y_holdout = split_features_target(holdout, config, task)
     print(f"Task: {task}   |   model: {model_type}   |   selection metric: {selection_metric}")
@@ -122,17 +122,18 @@ def train(args):
           f"from {holdout[validation['date_col']].min()})")
 
     # Every choice is made on the development rows only, by time-ordered cross-validation.
-    cv = make_cv(config)
+    cv = TimeSeriesSplit(n_splits=validation["n_splits"])
     threshold = task_config.get("threshold")                    # classification only
-    score = build_scorer(task, metrics, threshold)
-    pipeline = build_pipeline(task, config)
+    pipeline = build_pipeline(task, config, model_config)
     floor_pipeline = build_pipeline(task, config, FLOOR[task])
-    floor_scores = cross_validate_pipeline(floor_pipeline, X_dev, y_dev, cv, score, selection_metric)
-    fold_scores = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, score, selection_metric)
+    floor_scores = cross_validate_pipeline(floor_pipeline, X_dev, y_dev, cv, task, task_config)
+    fold_scores = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, task, task_config)
 
     # The hold-out is scored once, by a model fitted on the development rows: the honest estimate.
-    holdout_scores = score(clone(pipeline).fit(X_dev, y_dev), X_holdout, y_holdout)
-    holdout_floor = score(clone(floor_pipeline).fit(X_dev, y_dev), X_holdout, y_holdout)
+    holdout_model = clone(pipeline).fit(X_dev, y_dev)
+    holdout_baseline = clone(floor_pipeline).fit(X_dev, y_dev)
+    holdout_scores = score_model(holdout_model, X_holdout, y_holdout, task, task_config)
+    holdout_floor = score_model(holdout_baseline, X_holdout, y_holdout, task, task_config)
 
     cv_mean, cv_std = fold_scores["validation"].mean(), fold_scores["validation"].std(ddof=1)
     floor_mean = floor_scores["validation"].mean()
@@ -174,31 +175,7 @@ def train(args):
     print(f"\nSaved model: {model_path}  (refit on all {len(X_all)} training rows)")
     print(f"Full report: {report_path}")
 
-
-def load_model(config: dict, task: str) -> dict:
-    """The model saved by `train --task <task>`. Predicting never trains, so a missing file stops here."""
-    path = os.path.join(config["paths"]["models_dir"], MODEL_FILES[task])
-    if not os.path.exists(path):
-        raise SystemExit(f"No saved model at {path}. Run first: python main.py train --task {task}")
-    return joblib.load(path)
-
-
-def classify(model: dict, purchases, clients):
-    """
-    Returns (probability of returning, 0/1 decision) for raw purchase rows. The rows are prepared
-    with the settings saved in the model, so they get exactly the treatment the training rows got.
-    """
-    X, _ = split_features_target(prepare(purchases, clients, model["config"]), model["config"], "classification")
-    proba = model["pipeline"].predict_proba(X[model["features"]])[:, 1]
-    return proba, (proba >= model["threshold"]).astype(int)
-
-
-def predict_spend(model: dict, purchases, clients):
-    """Expected 90-day spend (EUR, never negative) for raw purchase rows, assuming the customer returns."""
-    X, _ = split_features_target(prepare(purchases, clients, model["config"]), model["config"], "regression")
-    return np.clip(model["pipeline"].predict(X[model["features"]]), 0, None).round(2)
-
-
+# Route 3: batch predictions for the test file
 def predict(args):
     """
     test.csv, with the two saved models ->
@@ -207,8 +184,9 @@ def predict(args):
     The two files cannot disagree: a spend is written only where the classifier says 1.
     """
     config = load_config()
-    classifier, regressor = load_model(config, "classification"), load_model(config, "regression")
-    _, test, clients = load_raw(config)
+    classifier = load_model(config, "classification")
+    regressor = load_model(config, "regression")
+    test, clients = load_data(config, "test")
     clf_target, reg_target = config["targets"]["classification"], config["targets"]["regression"]
 
     _, decision = classify(classifier, test, clients)
@@ -229,43 +207,44 @@ def predict(args):
           f"({len(returners)} rows, median spend {returners[reg_target].median():,.2f} EUR)")
 
 
-def score_purchase(record: dict, config: dict) -> dict:
-    """
-    One purchase, as {column of test.csv: value} -> probability of returning, 0/1 decision and
-    expected 90-day spend. Fields that are left out are treated as unknown. A purchase without
-    `prior_purchase_count` is a first purchase: its history counts and totals are 0, as they
-    are for the first purchases in the training file. The spend is 0 when the decision is 0.
-    """
-    classifier, regressor = load_model(config, "classification"), load_model(config, "regression")
-    _, test, clients = load_raw(config)
+# Route 4: prediction for one purchase
+def client(args):
+    """Read one purchase from JSON, predict with saved models, and print the result."""
+    config = load_config()
+    classifier = load_model(config, "classification")
+    regressor = load_model(config, "regression")
+    test, clients = load_data(config, "test")
+    with open(args.input, encoding="utf-8") as file:
+        record = json.load(file)
+
+    # Validate fields and use the test schema for names and data types.
     unknown = sorted(set(record) - set(test.columns))
     if unknown:
         raise SystemExit(f"Unknown fields: {unknown}. Allowed fields: {list(test.columns)}")
-
     record = {name: value for name, value in record.items() if value is not None}
+
+    # Preserve the existing policy: an omitted prior count means a first purchase.
     if "prior_purchase_count" not in record:
-        no_history = [c for c in test.columns if c.startswith(("purchase_count_", "spend_"))]
-        no_history += ["prior_purchase_count", "prior_total_spend", "customer_tenure_days"]
-        record = {**dict.fromkeys(no_history, 0), **record}
-    numeric = pd.api.types.is_numeric_dtype
-    purchase = pd.DataFrame([record]).reindex(columns=test.columns).astype(
-        {name: float if numeric(dtype) else dtype for name, dtype in test.dtypes.items()})
+        history_columns = [column for column in test.columns
+                           if column.startswith(("purchase_count_", "spend_"))]
+        history_columns += ["prior_purchase_count", "prior_total_spend", "customer_tenure_days"]
+        record = {**dict.fromkeys(history_columns, 0), **record}
+    dtypes = {name: float if pd.api.types.is_numeric_dtype(dtype) else dtype
+              for name, dtype in test.dtypes.items()}
+    purchase = pd.DataFrame([record]).reindex(columns=test.columns).astype(dtypes)
 
-    proba, decision = classify(classifier, purchase, clients)
-    spend = predict_spend(regressor, purchase, clients)[0] if decision[0] == 1 else 0.0
-    return {"probability": float(proba[0]), "decision": int(decision[0]), "spend": float(spend)}
+    # The classifier gates spend: a negative decision always means zero EUR.
+    probability, decision = classify(classifier, purchase, clients)
+    spend = 0.0
+    if decision[0] == 1:
+        spend = predict_spend(regressor, purchase, clients)[0]
 
-
-def client(args):
-    """Prints the prediction for the purchase in the JSON file `--input`."""
-    with open(args.input, encoding="utf-8") as f:
-        result = score_purchase(json.load(f), load_config())
-    print(f"Probability of buying again within 90 days: {result['probability']:.1%}")
-    print(f"Decision: {'returns' if result['decision'] else 'does not return'} ({result['decision']})")
-    print(f"Expected spend in the next 90 days: {result['spend']:,.2f} EUR")
+    print(f"Probability of buying again within 90 days: {probability[0]:.1%}")
+    print(f"Decision: {'returns' if decision[0] else 'does not return'} ({decision[0]})")
+    print(f"Expected spend in the next 90 days: {spend:,.2f} EUR")
 
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Repeat-purchase and 90-day spend pipeline.")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -286,7 +265,3 @@ def main():
 
     args = parser.parse_args()
     args.run(args)
-
-
-if __name__ == "__main__":
-    main()

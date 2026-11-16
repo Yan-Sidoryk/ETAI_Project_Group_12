@@ -1,6 +1,6 @@
 """
-Model construction: the model alone (`build_model`) and preprocessing + model as one
-estimator (`build_pipeline`). A new algorithm is one new entry in a registry below.
+Build preprocessing and the configured estimator together in one pipeline.
+A new algorithm is one entry in the registry below.
 """
 import numpy as np
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -45,12 +45,13 @@ FLOOR = {
 }
 
 
-def build_model(task: str, model_config: dict, seed: int = None):
-    """
-    Builds the `task` model named by `model_config["type"]` with `model_config["params"]`.
-    The model gets `seed` as its `random_state`, unless the params set one. With
-    `model_config["log_target"]` a regressor is fitted on log(1 + spend), which is close to
-    symmetric while spend itself is heavily skewed, and its predictions are converted back to EUR.
+def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
+    """Build an unfitted preprocessing/model pipeline from explicit model settings.
+
+    `model_config` contains "type", optional "params", and optional "log_target".
+    Each fold fits its own preprocessing. The seed is used unless params already
+    specify random_state. A log-target regressor converts predictions back to EUR.
+    Step names remain "prep" and "model" for hyperparameter configuration.
     """
     registry = _MODELS[task]
     model_type = model_config["type"]
@@ -60,33 +61,11 @@ def build_model(task: str, model_config: dict, seed: int = None):
     model = registry[model_type](**params)
     if "random_state" not in params:
         try:
-            model.set_params(random_state=seed)
-        except ValueError:      # the model has no randomness (the mean-spend floor)
+            model.set_params(random_state=config["seed"])
+        except ValueError:  # Some estimators, such as DummyRegressor, have no seed.
             pass
     if model_config.get("log_target"):
         model = TransformedTargetRegressor(regressor=model, func=np.log1p, inverse_func=np.expm1)
-    return model
 
-
-def configured_model(config: dict, task: str, name: str = None) -> dict:
-    """The model config of `name` in config[task]["models"]; by default the one `train` saves."""
-    name = name or config[task]["model"]
-    models = config[task]["models"]
-    if name not in models:
-        raise ValueError(f"{task}.model is {name}, which is not in {task}.models: {list(models)}")
-    return {"type": name, **models[name]}
-
-
-def build_pipeline(task: str, config: dict, model_config: dict = None) -> Pipeline:
-    """
-    The estimator that is cross-validated, refit and saved: preprocessing and model as one
-    Pipeline, so the preprocessing is re-fitted on the training part of every fold. The model
-    is the one named by config[task]["model"] unless `model_config` gives another one.
-    Step names are fixed, so hyperparameters are addressed as `model__<name>`
-    (`model__regressor__<name>` for a regressor with `log_target`).
-    """
-    model_config = model_config or configured_model(config, task)
-    return Pipeline([
-        ("prep", build_preprocessor(config["preprocessing"])),
-        ("model", build_model(task, model_config, config["seed"])),
-    ])
+    preprocessor = build_preprocessor(config["preprocessing"])
+    return Pipeline([("prep", preprocessor), ("model", model)])
