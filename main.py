@@ -97,14 +97,22 @@ def train(args):
     of the configured model on the development rows -> score on the hold-out -> refit on every
     training row -> saved model + scoreboard row + full report.
     """
-    task = args.task
+    task = args.task # Task can be "classification" or "regression"
     config = load_config()
     task_config = config[task]
-    metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
+
+    # Fetching Config Params
+    metrics = task_config["metrics"]
+    selection_metric = task_config["selection_metric"]
     model_type = task_config["model"]
+
+    # Getting Model Params 
     model_params = configured_model(config, task).get("params")
+
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+
+    # Data Imported Here
     rows, dev, holdout = load_splits(config, task)
     validation = config["validation"]
     X_dev, y_dev = split_features_target(dev, config, task)

@@ -29,13 +29,13 @@ client_columns:
 
 validation:
   date_col: purchase_date
-  holdout_fraction: 0.2        # most recent rows, never used for any choice
-  n_splits: 5                  # TimeSeriesSplit folds on the remaining rows
+  holdout_fraction: 0.2 # most recent rows, never used for any choice
+  n_splits: 5 # TimeSeriesSplit folds on the remaining rows
 
 preprocessing:
-  scaler: standard             # none | standard | minmax | robust
-  min_frequency: 20            # category levels with fewer training rows are grouped together
-  categorical_features:        # every other feature is treated as numeric
+  scaler: standard # none | standard | minmax | robust
+  min_frequency: 20 # category levels with fewer training rows are grouped together
+  categorical_features: # every other feature is treated as numeric
     - payment_type
     - salesperson
     - commercial_zone
@@ -47,31 +47,78 @@ preprocessing:
 
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
-  selection_metric: f1         # the Kaggle metric; must be one of metrics
-  threshold: 0.5               # probability from which a customer is predicted to return
-  model: random_forest         # the one that `train` saves; must be a name in models
-  models:                      # every model that `compare` cross-validates, with its params
-    logistic_regression: {params: {max_iter: 2000}}
-    random_forest: {params: {n_estimators: 300, min_samples_leaf: 5}}
-    hist_gradient_boosting: {params: {learning_rate: 0.05, max_iter: 200}}
-    xgboost: {params: {n_estimators: 200, learning_rate: 0.05, max_depth: 4}}
-    lightgbm: {params: {n_estimators: 200, learning_rate: 0.05, num_leaves: 15, verbose: -1}}
-    catboost: {params: {iterations: 300, learning_rate: 0.05, depth: 6, verbose: 0, allow_writing_files: false}}
+  selection_metric: f1 # the Kaggle metric; must be one of metrics
+  threshold: 0.5 # probability from which a customer is predicted to return
+  model: random_forest # the one that `train` saves; must be a name in models
+  models: # every model that `compare` cross-validates, with its params
+    logistic_regression: { params: { max_iter: 2000 } }
+    random_forest: { params: { n_estimators: 300, min_samples_leaf: 5 } }
+    hist_gradient_boosting: { params: { learning_rate: 0.05, max_iter: 200 } }
+    xgboost:
+      { params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 } }
+    lightgbm:
+      {
+        params:
+          {
+            n_estimators: 200,
+            learning_rate: 0.05,
+            num_leaves: 15,
+            verbose: -1,
+          },
+      }
+    catboost:
+      {
+        params:
+          {
+            iterations: 300,
+            learning_rate: 0.05,
+            depth: 6,
+            verbose: 0,
+            allow_writing_files: false,
+          },
+      }
 
 regression:
-  metrics: [rmse, mae, r2]     # measured in EUR, on customers who really returned
-  selection_metric: rmse       # lower is better; must be one of metrics
-  model: catboost              # the one that `train` saves; must be a name in models
+  metrics: [rmse, mae, r2] # measured in EUR, on customers who really returned
+  selection_metric: rmse # lower is better; must be one of metrics
+  model: catboost # the one that `train` saves; must be a name in models
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
-  models:                      # every model that `compare` cross-validates, with its params
-    ridge: {params: {alpha: 1.0}, log_target: false}
-    random_forest: {params: {n_estimators: 300, min_samples_leaf: 5}, log_target: false}
-    hist_gradient_boosting: {params: {learning_rate: 0.05, max_iter: 200}, log_target: false}
-    xgboost: {params: {n_estimators: 200, learning_rate: 0.05, max_depth: 4}, log_target: false}
-    lightgbm: {params: {n_estimators: 200, learning_rate: 0.05, num_leaves: 15, verbose: -1}, log_target: false}
-    catboost: {params: {iterations: 300, learning_rate: 0.05, depth: 6, verbose: 0, allow_writing_files: false}, log_target: false}
+  models: # every model that `compare` cross-validates, with its params
+    ridge: { params: { alpha: 1.0 }, log_target: false }
+    random_forest:
+      { params: { n_estimators: 300, min_samples_leaf: 5 }, log_target: false }
+    hist_gradient_boosting:
+      { params: { learning_rate: 0.05, max_iter: 200 }, log_target: false }
+    xgboost:
+      {
+        params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 },
+        log_target: false,
+      }
+    lightgbm:
+      {
+        params:
+          {
+            n_estimators: 200,
+            learning_rate: 0.05,
+            num_leaves: 15,
+            verbose: -1,
+          },
+        log_target: false,
+      }
+    catboost:
+      {
+        params:
+          {
+            iterations: 300,
+            learning_rate: 0.05,
+            depth: 6,
+            verbose: 0,
+            allow_writing_files: false,
+          },
+        log_target: false,
+      }
 
 outputs:
   submission: outputs/submission.csv
