@@ -15,4 +15,5 @@ outputs/*
 planning/
 AGENTS.md
 
+.vscode/*
 repomix-output.xml
