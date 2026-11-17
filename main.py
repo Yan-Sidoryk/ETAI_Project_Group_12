@@ -22,7 +22,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
-from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout
+from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout, TimeCalendarSplit
 from src.features import prepare, split_features_target
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
 from src.model import FLOOR, build_pipeline
@@ -56,7 +56,7 @@ def compare(args):
         dev = dev.loc[dev[target].notna()]
 
     X_dev, y_dev = split_features_target(dev, config, task)
-    cv = TimeSeriesSplit(n_splits=validation["n_splits"])
+    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=90)
 
     candidates = {"floor": FLOOR[task]}
     for name, settings in task_config["models"].items():
@@ -122,7 +122,7 @@ def train(args):
           f"from {holdout[validation['date_col']].min()})")
 
     # Every choice is made on the development rows only, by time-ordered cross-validation.
-    cv = TimeSeriesSplit(n_splits=validation["n_splits"])
+    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=90)
     threshold = task_config.get("threshold")                    # classification only
     pipeline = build_pipeline(task, config, model_config)
     floor_pipeline = build_pipeline(task, config, FLOOR[task])

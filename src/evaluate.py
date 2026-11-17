@@ -3,20 +3,58 @@ Model assessment. The test file is later in time than the training file, so ever
 is ordered by purchase date: models are always fitted on the past and scored on the future.
 """
 import pandas as pd
+import numpy as np
 from sklearn.base import clone
 from sklearn.metrics import (accuracy_score, average_precision_score, balanced_accuracy_score, f1_score,
                              mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score,
                              root_mean_squared_error)
 
-
-def split_holdout(df: pd.DataFrame, date_col: str, fraction: float):
+def split_holdout(df: pd.DataFrame, date_col: str, fraction: float, gap_days: int = 90):
     """
-    Returns (dev, holdout), both sorted by date: `holdout` is the most recent `fraction` of the
-    rows, kept out of every decision; `dev` is everything before it.
+    Returns (dev, holdout) sorted by date.
+    The 'dev' set ends 90 days before the first purchase in the 'holdout' set, preventing leakage.
     """
     ordered = df.sort_values(date_col, key=pd.to_datetime, kind="stable").reset_index(drop=True)
     cut = len(ordered) - round(len(ordered) * fraction)
-    return ordered.iloc[:cut], ordered.iloc[cut:].reset_index(drop=True)
+    
+    holdout = ordered.iloc[cut:].reset_index(drop=True)
+    holdout_start_date = pd.to_datetime(holdout[date_col].min())
+    
+    # Aplica o embargo de 90 dias
+    cutoff_date = holdout_start_date - pd.Timedelta(days=gap_days)
+    
+    dev = ordered[pd.to_datetime(ordered[date_col]) < cutoff_date].reset_index(drop=True)
+    return dev, holdout
+
+class TimeCalendarSplit:
+    """
+    Replaces the standard TimeSeriesSplit. Imposes a strict calendar time gap 
+    instead of row count, ensuring isolation between blocks.
+    """
+    def __init__(self, date_series, n_splits=5, gap_days=90):
+        self.date_series = pd.to_datetime(date_series).reset_index(drop=True)
+        self.n_splits = n_splits
+        self.gap_days = gap_days
+
+    def split(self, X, y=None, groups=None):
+        indices = np.arange(len(X))
+        fold_size = len(X) // (self.n_splits + 1)
+
+        for i in range(1, self.n_splits + 1):
+            val_end = (i + 1) * fold_size if i < self.n_splits else len(X)
+            val_start = i * fold_size
+            val_idx = indices[val_start:val_end]
+            
+            val_start_date = self.date_series.iloc[val_start]
+            
+            # Training ends strictly gap_days before validation starts
+            cutoff_date = val_start_date - pd.Timedelta(days=self.gap_days)
+            train_idx = indices[(self.date_series < cutoff_date) & (indices < val_start)]
+            
+            yield train_idx, val_idx
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
 
 
 # name -> function(y_true, predicted label, predicted probability of returning)
