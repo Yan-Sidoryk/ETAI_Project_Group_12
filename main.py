@@ -28,6 +28,35 @@ from src.model import FLOOR, build_pipeline
 from src.results import save_run, save_scores
 
 
+# Shared by compare and train, so both always judge models on the same rows and folds
+def load_training_splits(config: dict, task: str):
+    """
+    Returns (rows, dev, holdout, cv) for `task`:
+      rows     every usable training row, used to refit the saved model
+      dev      the development rows, before the hold-out minus the gap
+      holdout  the most recent rows, kept out of every choice
+      cv       time-ordered folds over `dev`, with the same calendar gap
+    The time boundary is set on all rows first; regression then keeps only rows with a known spend.
+    """
+    # Load and prepare training purchases; never remove rows during inference.
+    train_raw, clients = load_data(config, "train")
+    excluded = config["id_cols"] + list(config["targets"].values())
+    feature_columns = [column for column in train_raw.columns if column not in excluded]
+    rows = drop_empty_rows(train_raw, feature_columns)
+    rows = prepare(rows, clients, config)
+
+    validation = config["validation"]
+    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"], validation["gap_days"])
+    if task == "regression":
+        target = config["targets"]["regression"]
+        rows = rows.loc[rows[target].notna()]
+        dev = dev.loc[dev[target].notna()]
+        holdout = holdout.loc[holdout[target].notna()]
+
+    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=validation["gap_days"])
+    return rows, dev, holdout, cv
+
+
 # Route 1: compare candidates on development data
 def compare(args):
     """
@@ -40,22 +69,8 @@ def compare(args):
     task_config = config[task]
     metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
 
-    # Load and prepare training purchases; never remove rows during inference.
-    train_raw, clients = load_data(config, "train")
-    excluded = config["id_cols"] + list(config["targets"].values())
-    feature_columns = [column for column in train_raw.columns if column not in excluded]
-    rows = drop_empty_rows(train_raw, feature_columns)
-    rows = prepare(rows, clients, config)
-
-    # Set the common time boundary before filtering unknown regression targets.
-    validation = config["validation"]
-    dev, _ = split_holdout(rows, validation["date_col"], validation["holdout_fraction"], validation["gap_days"])
-    if task == "regression":
-        target = config["targets"]["regression"]
-        dev = dev.loc[dev[target].notna()]
-
+    _, dev, _, cv = load_training_splits(config, task)
     X_dev, y_dev = split_features_target(dev, config, task)
-    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=validation["gap_days"])
 
     candidates = {"floor": FLOOR[task]}
     for name, settings in task_config["models"].items():
@@ -94,26 +109,15 @@ def train(args):
     metrics = task_config["metrics"]
     selection_metric = task_config["selection_metric"]
     model_type = task_config["model"]
+    if model_type not in task_config["models"]:
+        raise SystemExit(f"config.yaml: {task}.model is '{model_type}', which is not in {task}.models. "
+                         f"Options: {list(task_config['models'])}")
     model_config = {"type": model_type, **task_config["models"][model_type]}
     model_params = model_config.get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Load and prepare training purchases; never remove rows during inference.
-    train_raw, clients = load_data(config, "train")
-    excluded = config["id_cols"] + list(config["targets"].values())
-    feature_columns = [column for column in train_raw.columns if column not in excluded]
-    rows = drop_empty_rows(train_raw, feature_columns)
-    rows = prepare(rows, clients, config)
-
-    # Set the common time boundary before filtering unknown regression targets.
+    rows, dev, holdout, cv = load_training_splits(config, task)
     validation = config["validation"]
-    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"], validation["gap_days"])
-    if task == "regression":
-        target = config["targets"]["regression"]
-        rows = rows.loc[rows[target].notna()]
-        dev = dev.loc[dev[target].notna()]
-        holdout = holdout.loc[holdout[target].notna()]
-
     X_dev, y_dev = split_features_target(dev, config, task)
     X_holdout, y_holdout = split_features_target(holdout, config, task)
     print(f"Task: {task}   |   model: {model_type}   |   selection metric: {selection_metric}")
@@ -121,7 +125,6 @@ def train(args):
           f"from {holdout[validation['date_col']].min()})")
 
     # Every choice is made on the development rows only, by time-ordered cross-validation.
-    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=validation["gap_days"])
     threshold = task_config.get("threshold")                    # classification only
     pipeline = build_pipeline(task, config, model_config)
     floor_pipeline = build_pipeline(task, config, FLOOR[task])
@@ -243,7 +246,8 @@ def client(args):
     print(f"Expected spend in the next 90 days: {spend:,.2f} EUR")
 
 
-if __name__ == "__main__":
+def main():
+    """Parse the command line and run the chosen route."""
     parser = argparse.ArgumentParser(description="Repeat-purchase and 90-day spend pipeline.")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -264,3 +268,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args.run(args)
+
+
+if __name__ == "__main__":
+    main()

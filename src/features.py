@@ -19,6 +19,12 @@ def prepare(df: pd.DataFrame, clients: pd.DataFrame, config: dict) -> pd.DataFra
     out = clean_dataset(df, config["diagnosis"])
     client_columns = ["customer_id"] + config["client_columns"]
     out = out.merge(clients[client_columns], on="customer_id", how="left")
+    return add_features(out)
+
+
+def add_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds the engineered features, row by row. New features go here and nowhere else."""
+    out = df.copy()
     out["is_first_purchase"] = (out["prior_purchase_count"] == 0).astype(int)
     out["purchase_month"] = pd.to_datetime(out["purchase_date"]).dt.month
     return out
