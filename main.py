@@ -18,7 +18,6 @@ from datetime import datetime
 import joblib
 import pandas as pd
 from sklearn.base import clone
-from sklearn.model_selection import TimeSeriesSplit
 
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
@@ -50,13 +49,13 @@ def compare(args):
 
     # Set the common time boundary before filtering unknown regression targets.
     validation = config["validation"]
-    dev, _ = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    dev, _ = split_holdout(rows, validation["date_col"], validation["holdout_fraction"], validation["gap_days"])
     if task == "regression":
         target = config["targets"]["regression"]
         dev = dev.loc[dev[target].notna()]
 
     X_dev, y_dev = split_features_target(dev, config, task)
-    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=90)
+    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=validation["gap_days"])
 
     candidates = {"floor": FLOOR[task]}
     for name, settings in task_config["models"].items():
@@ -108,7 +107,7 @@ def train(args):
 
     # Set the common time boundary before filtering unknown regression targets.
     validation = config["validation"]
-    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"])
+    dev, holdout = split_holdout(rows, validation["date_col"], validation["holdout_fraction"], validation["gap_days"])
     if task == "regression":
         target = config["targets"]["regression"]
         rows = rows.loc[rows[target].notna()]
@@ -122,7 +121,7 @@ def train(args):
           f"from {holdout[validation['date_col']].min()})")
 
     # Every choice is made on the development rows only, by time-ordered cross-validation.
-    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=90)
+    cv = TimeCalendarSplit(dev[validation["date_col"]], n_splits=validation["n_splits"], gap_days=validation["gap_days"])
     threshold = task_config.get("threshold")                    # classification only
     pipeline = build_pipeline(task, config, model_config)
     floor_pipeline = build_pipeline(task, config, FLOOR[task])

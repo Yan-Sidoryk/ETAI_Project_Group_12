@@ -9,10 +9,10 @@ from sklearn.metrics import (accuracy_score, average_precision_score, balanced_a
                              mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score,
                              root_mean_squared_error)
 
-def split_holdout(df: pd.DataFrame, date_col: str, fraction: float, gap_days: int = 90):
+def split_holdout(df: pd.DataFrame, date_col: str, fraction: float, gap_days: int):
     """
     Returns (dev, holdout) sorted by date.
-    The 'dev' set ends 90 days before the first purchase in the 'holdout' set, preventing leakage.
+    The 'dev' set ends `gap_days` days before the first purchase in the 'holdout' set, preventing leakage.
     """
     ordered = df.sort_values(date_col, key=pd.to_datetime, kind="stable").reset_index(drop=True)
     cut = len(ordered) - round(len(ordered) * fraction)
@@ -20,7 +20,7 @@ def split_holdout(df: pd.DataFrame, date_col: str, fraction: float, gap_days: in
     holdout = ordered.iloc[cut:].reset_index(drop=True)
     holdout_start_date = pd.to_datetime(holdout[date_col].min())
     
-    # Aplica o embargo de 90 dias
+    # Apply the gap_days embargo
     cutoff_date = holdout_start_date - pd.Timedelta(days=gap_days)
     
     dev = ordered[pd.to_datetime(ordered[date_col]) < cutoff_date].reset_index(drop=True)
@@ -31,7 +31,7 @@ class TimeCalendarSplit:
     Replaces the standard TimeSeriesSplit. Imposes a strict calendar time gap 
     instead of row count, ensuring isolation between blocks.
     """
-    def __init__(self, date_series, n_splits=5, gap_days=90):
+    def __init__(self, date_series, n_splits, gap_days):
         self.date_series = pd.to_datetime(date_series).reset_index(drop=True)
         self.n_splits = n_splits
         self.gap_days = gap_days
