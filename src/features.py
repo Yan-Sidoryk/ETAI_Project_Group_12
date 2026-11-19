@@ -27,6 +27,23 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["is_first_purchase"] = (out["prior_purchase_count"] == 0).astype(int)
     out["purchase_month"] = pd.to_datetime(out["purchase_date"]).dt.month
+
+    def ratio(num, den):  # zero or missing denominator -> NaN, left to the pipeline imputer
+        return num / den.where(den != 0)
+
+    # Recency and frequency
+    out["overdue_ratio"] = ratio(out["days_since_previous_purchase"], out["prior_mean_gap_days"])
+    out["purchase_rate"] = ratio(out["prior_purchase_count"], out["customer_tenure_days"])
+    # Trend: last 90 days against the average quarter of the last year
+    out["spend_trend_90d"] = ratio(out["spend_90d"] * 4, out["spend_365d"])
+    out["count_trend_90d"] = ratio(out["purchase_count_90d"], out["purchase_count_365d"])
+    # Current purchase against the customer's usual one
+    out["value_vs_usual"] = ratio(out["Total a Pagar"], out["prior_mean_purchase_value"])
+    # Margin, discounts, basket shape
+    out["margin_rate"] = ratio(out["Total Liquido"] - out["Custo"], out["Total Liquido"])
+    out["discount_rate"] = ratio(out["Total Desc_ Global"] + out["Total Desc_ Linha"], out["Total Bruto"])
+    out["value_per_line"] = ratio(out["Total Liquido"], out["N_ Detalhes"])
+    out["shipping_rate"] = ratio(out["Total Portes"], out["Total Liquido"])
     return out
 
 

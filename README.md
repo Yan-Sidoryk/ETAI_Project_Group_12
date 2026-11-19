@@ -136,9 +136,14 @@ XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibil
 | Classification (F1) | XGBoost | 0.725 ± 0.023 | 0.712 | 0.771 (floor 0.753), ROC-AUC 0.809 |
 | Regression (RMSE, EUR) | CatBoost | 2,047 ± 200 | 2,472 | 2,483 (floor 3,289), MAE 1,288, R² 0.42 |
 
-`compare --task classification` (CV F1): random forest 0.741, CatBoost 0.726, XGBoost 0.725, hist gradient boosting 0.719,
-LightGBM 0.716, floor 0.712, logistic regression 0.709. XGBoost stays selected for now; random forest is the
-current CV winner.
+Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
+`count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
+The table above predates them and needs a `train` rerun.
+
+`compare --task classification` (CV F1, with the new features): random forest 0.744, XGBoost 0.729, CatBoost 0.727,
+LightGBM 0.723, hist gradient boosting 0.721, logistic regression 0.712, floor 0.712.
+`compare --task regression` (CV RMSE): random forest 1,967, XGBoost 1,993, CatBoost 2,001, LightGBM 2,008,
+hist gradient boosting 2,049, ridge 2,216, floor 2,472. Random forest leads both tasks; config still saves XGBoost / CatBoost.
 
 ### Next steps
 
@@ -147,8 +152,8 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 1. **Threshold tuning** on out-of-fold probabilities; an early check (logistic regression, before the
    90-day gap) gave CV F1 0.742 at threshold 0.35 against 0.714 at 0.5 [classification metrics 0.5].
 2. **Hyperparameter tuning** with Optuna, scored by the same gapped CV [tuning 0.75 + regression 1.5].
-3. **Feature engineering** in `add_features()`: discount rate, margin, spend trend, gap ratios
-   [preprocessing and FE 1 + regression 1.5].
+3. **Feature engineering** in `add_features()`: first set done (see status); gains are within one CV std, so
+   check them with feature selection [preprocessing and FE 1 + regression 1.5].
 4. **Feature selection** as a `"select"` step in `build_pipeline()`; `random_noise` must be rejected
    [feature selection 0.75].
 5. **Preprocessing comparison:** encoders, scalers, imputers [preprocessing and FE].
