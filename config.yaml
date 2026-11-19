@@ -19,7 +19,6 @@ id_cols:
 # Columns never used as model inputs (purchase_date is used only to order the splits).
 drop_columns:
   - purchase_date
-  - random_noise
 
 # Columns taken from clientes.csv (joined on customer_id).
 client_columns:
@@ -45,6 +44,18 @@ preprocessing:
     - document_series
     - country_or_region
     - commercial_region
+
+# Feature selection, a pipeline step between preprocessing and the model (refitted in every fold).
+# method: none | model | permutation. Both run on the encoded columns.
+#   model: random-forest impurity importance >= `threshold` (SelectFromModel syntax: "median", "mean", a number).
+#          Biased toward continuous columns: it keeps random_noise.
+#   permutation: permutation importance > 0 on 25% of the training fold held out of the forest (`n_repeats` shuffles).
+# random_noise stays a candidate feature on purpose: a working selector must drop it.
+feature_selection:
+  method: permutation
+  threshold: median
+  n_repeats: 5
+  params: { n_estimators: 200, min_samples_leaf: 5, n_jobs: -1 }
 
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]

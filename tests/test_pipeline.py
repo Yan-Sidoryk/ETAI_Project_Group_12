@@ -36,6 +36,7 @@ class PipelineRoutesTest(unittest.TestCase):
             "scoreboard": str(Path(cls.directory.name) / "outputs/runs.csv"),
         }
         cls.config["validation"]["n_splits"] = 2
+        cls.config["feature_selection"].update(n_repeats=1, params={"n_estimators": 3, "min_samples_leaf": 5})
         # Small stand-in models; select them explicitly so the tests do not depend on config.yaml's choice.
         cls.config["classification"]["model"] = "random_forest"
         cls.config["regression"]["model"] = "catboost"

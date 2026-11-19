@@ -122,7 +122,7 @@ raw rows ──> clean (diagnosis.yaml) ──> join clientes.csv ──> add_fe
   missing spend is not zero). Log target is off (`log_target: false`): on the tree models it lowers MAE but raises RMSE.
 - **Coherence:** spend is predicted only where the classifier says "returns"; the regression file holds exactly
   those IDs and the client shows 0 EUR otherwise.
-- **Not used as features:** IDs, `purchase_date` (splitting only), `random_noise`, both targets, and the
+- **Not used as features:** IDs, `purchase_date` (splitting only), both targets, and the
   `clientes.csv` columns other than `country_or_region`, `commercial_region` and `customer_since_year`
   (mostly missing or almost unique per customer).
 
@@ -140,10 +140,19 @@ Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), t
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
 The table above predates them and needs a `train` rerun.
 
-`compare --task classification` (CV F1, with the new features): random forest 0.744, XGBoost 0.729, CatBoost 0.727,
-LightGBM 0.723, hist gradient boosting 0.721, logistic regression 0.712, floor 0.712.
-`compare --task regression` (CV RMSE): random forest 1,967, XGBoost 1,993, CatBoost 2,001, LightGBM 2,008,
-hist gradient boosting 2,049, ridge 2,216, floor 2,472. Random forest leads both tasks; config still saves XGBoost / CatBoost.
+Feature selection (19 Nov 2026): a `select` step between `prep` and `model` (`feature_selection` in `config.yaml`),
+on the one-hot columns, refitted in every fold. `random_noise` is a candidate again and must be dropped.
+- `method: model` (random-forest impurity importance, median cut) keeps `random_noise` (rank 21 of 131): impurity favours
+  continuous columns. Rejected.
+- `method: permutation` (default): permutation importance > 0 on 25% of the training fold held out of the forest.
+  Drops `random_noise` in both tasks. On the dev rows it keeps 79 of 131 columns (classification) and 72 of 113
+  (regression); it drops `count_trend_90d`, `value_vs_usual`, `shipping_rate` (classification) and `overdue_ratio`,
+  `value_vs_usual` (regression).
+
+CV with the new features and permutation selection: classification F1 random forest 0.746, XGBoost 0.730, CatBoost 0.727,
+logistic regression 0.725, LightGBM 0.720, hist gradient boosting 0.716, floor 0.712. Regression RMSE random forest 1,964,
+LightGBM 1,999, XGBoost 2,015, CatBoost 2,027, hist gradient boosting 2,052, ridge 2,187, floor 2,472.
+Random forest leads both tasks; config still saves XGBoost / CatBoost. Selection makes `compare` about 10x slower.
 
 ### Next steps
 
@@ -154,7 +163,7 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 2. **Hyperparameter tuning** with Optuna, scored by the same gapped CV [tuning 0.75 + regression 1.5].
 3. **Feature engineering** in `add_features()`: first set done (see status); gains are within one CV std, so
    check them with feature selection [preprocessing and FE 1 + regression 1.5].
-4. **Feature selection** as a `"select"` step in `build_pipeline()`; `random_noise` must be rejected
+4. **Feature selection:** done (see status). Left: a per-feature permutation table for the report
    [feature selection 0.75].
 5. **Preprocessing comparison:** encoders, scalers, imputers [preprocessing and FE].
 6. **Statistical model comparison** (corrected paired t-test on the same folds) [model assessment].
