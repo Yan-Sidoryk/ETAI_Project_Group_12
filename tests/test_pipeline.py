@@ -28,6 +28,8 @@ class PipelineRoutesTest(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory(prefix="etai-pipeline-")
         cls.addClassCleanup(cls.directory.cleanup)
         cls.config = load_config()
+        # These route checks use fixed stand-in models without search spaces.
+        cls.config["tuning"] = {"enabled": False}
         cls.config["paths"]["models_dir"] = str(Path(cls.directory.name) / "models")
         cls.config["paths"]["outputs_dir"] = str(Path(cls.directory.name) / "outputs")
         cls.config["outputs"] = {

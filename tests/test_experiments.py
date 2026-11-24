@@ -22,6 +22,9 @@ class PreprocessingExperimentsTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.config = load_config()
+        # These grid assertions require the reference to be one of its candidates.
+        # Keep that fixture independent of the user's selected production scaler.
+        self.config["preprocessing"]["scaler"] = "standard"
         self.config["paths"]["outputs_dir"] = self.temp.name
         self.config["preprocessing_experiment"] = {
             "mode": "grid", "candidates": {"scaler": ["standard", "none"], "encoder": ["onehot", "ordinal"]}}

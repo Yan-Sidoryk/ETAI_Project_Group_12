@@ -17,6 +17,7 @@ src/
   model.py          model registry per task, baseline ("floor") models, build_pipeline()
   evaluate.py       time-ordered hold-out and CV folds with a calendar gap, metrics, CV reports
   experiments.py    preprocessing grid search, summaries, fold scores
+  tuning.py         Optuna model hyperparameter search on development folds
   inference.py      load saved models; shared classify / predict_spend for predict and client
   results.py        scoreboard and run reports
 tests/          preprocessing, experiments, and command integration tests
@@ -259,6 +260,74 @@ python main.py train --task regression
 Set the chosen preprocessing before training each task if their winning settings differ.
 Each saved model retains its own fitted preprocessing.
 
+### Tuning model hyperparameters with Optuna (24 Nov 2026)
+
+Control tuning entirely through `config.yaml`:
+
+```yaml
+tuning:
+  enabled: true
+  n_trials: 30
+  timeout_seconds: null
+```
+
+Then run the normal training command:
+
+```bash
+uv run python main.py train --task classification
+uv run python main.py train --task regression
+```
+
+When enabled, training first tunes the selected task's `model` using its
+`search_space`, selects the best parameters from development CV, then evaluates
+the holdout and refits the saved model on all usable rows. Set `enabled: false`
+to train with the fixed `params` directly. Missing `tuning.enabled` also defaults
+to false. The preprocessing experiment and prediction commands do not trigger tuning.
+Install dependencies with `uv sync` or `pip install -r requirements.txt`.
+
+`tuning.n_trials` sets the number of attempted trials for the selected model,
+including failed trials. `timeout_seconds` optionally limits the search; a running
+trial finishes before stopping. Thirty trials with five folds means up to 150
+search fits, followed by the usual training assessment and final fit. Seeded TPE
+sampling runs sequentially; full-count runs are reproducible, while time limits
+can change the number of trials.
+
+Edit ranges under each model alongside its fixed `params`, for example:
+
+```yaml
+random_forest:
+  params: {n_estimators: 300, min_samples_leaf: 5}
+  search_space:
+    n_estimators: {type: int, low: 100, high: 600, step: 100}
+    min_samples_leaf: {type: int, low: 1, high: 20}
+    max_depth: {type: categorical, choices: [null, 5, 10, 20, 40]}
+```
+
+Numeric ranges accept `type: int` or `float`, `low`, `high`, and optional `step`
+or `log: true` (logarithmic floats cannot also specify a step; logarithmic integers
+require step 1). Categorical ranges use `type: categorical` and `choices`.
+Sampled parameters override corresponding fixed `params`; unsampled parameters
+retain their fixed values. Search spaces are supplied for all six models per task.
+
+Tuning uses current preprocessing, refitted inside every training fold, and keeps
+the classification threshold and regression `log_target` fixed. The holdout and
+test rows never participate in tuning. F1 and R² are maximized; RMSE/MAE are
+minimized. All configured metrics are recorded. Successful trials use every fold;
+invalid combinations are recorded and the search continues. If all trials fail,
+training stops before replacing a saved model.
+
+Each enabled training run creates `outputs/tuning_<task>_<timestamp>/` with
+`trials.csv` (parameters, metrics, runtime and failures), `folds.csv`, `summary.csv`
+and `best_config.yaml`. Results checkpoint after each trial.
+Classification CSVs are ordered by descending F1 (mean F1 for trials and summary),
+with failed trials last. Regression CSVs follow the selection metric's direction.
+`params` and `sampled_params` are the last two columns in trials and summary.
+The generated config contains the winning parameters with tuning disabled, so it can reproduce training
+without another search. The source config stays unchanged; the saved model and
+training report use the winning parameters. Each enabled training run starts a
+fresh search. Tuned CV scores are selection scores, not independent performance
+estimates; use the reserved holdout for the final assessment.
+
 ### Status (17 Nov 2026)
 
 Done: cleaning, features, gapped splits, 6 algorithms per task (logistic/ridge, random forest, hist gradient boosting,
@@ -273,13 +342,34 @@ XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibil
 LightGBM 0.716, floor 0.712, logistic regression 0.709. XGBoost stays selected for now; random forest is the
 current CV winner.
 
+### Clustering experiment (24 Nov 2026)
+
+Open `notebooks/02_repeat_buyer_clustering.ipynb` with `uv run jupyter lab` (or
+`jupyter lab` in the activated environment), select the project's Python environment,
+and run all cells. It runs from either the repository root or `notebooks/` on Mac
+and Windows using the existing dependencies.
+
+The notebook compares K-means repeat-purchase prediction with the always-return
+floor and configured supervised classifier. It selects the cluster count using
+the existing gapped chronological development folds, then assesses the reserved
+holdout. Each cluster predicts its training repeat rate; t-SNE only visualizes
+development purchases. Cluster profiles, fold metrics, holdout confusion matrices,
+and measured conclusions appear in the notebook. This experiment leaves production
+configuration, saved models, and submissions unchanged.
+
+Verified run: two clusters selected (development CV F1 0.7209); holdout F1 was
+0.7573 for clustering, 0.7528 for the always-return floor, and 0.7729 for the
+configured random forest. Clustering classified only 44 of 1,294 holdout purchases
+as non-repeat, so its small F1 improvement does not imply strong non-repeat buyer
+detection. The executed notebook includes the results and both figures.
+
 ### Next steps
 
 Roughly ordered by grade points per effort. The grading line from the brief is in brackets.
 
 1. **Threshold tuning** on out-of-fold probabilities; an early check (logistic regression, before the
    90-day gap) gave CV F1 0.742 at threshold 0.35 against 0.714 at 0.5 [classification metrics 0.5].
-2. **Hyperparameter tuning** with Optuna, scored by the same gapped CV [tuning 0.75 + regression 1.5].
+2. **Run hyperparameter tuning** by enabling Optuna in `config.yaml`, scored by the same gapped CV [tuning 0.75 + regression 1.5].
 3. **Feature engineering** in `add_features()`: discount rate, margin, spend trend, gap ratios
    [preprocessing and FE 1 + regression 1.5].
 4. **Feature selection** as a `"select"` step in `build_pipeline()`; `random_noise` must be rejected

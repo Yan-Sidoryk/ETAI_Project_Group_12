@@ -35,10 +35,10 @@ validation:
 
 preprocessing:
   # Each choice accepts a name, or {type: name, params: {...}} for sklearn parameters.
-  scaler: robust # none | standard | minmax | robust | maxabs | normalize | power | quantile
+  scaler: none # none | standard | minmax | robust | maxabs | normalize | power | quantile
   numeric_imputer: mean # median | mean | most_frequent | constant (0) | knn | none
-  categorical_imputer: constant # constant ("missing") | most_frequent | none
-  encoder: ordinal # onehot | ordinal (unseen categories -> -1)
+  categorical_imputer: most_frequent # constant ("missing") | most_frequent | none
+  encoder: onehot # onehot | ordinal (unseen categories -> -1)
   # Examples (replace the corresponding choice above):
   # scaler: {type: robust, params: {quantile_range: [10, 90]}}
   # numeric_imputer: {type: knn, params: {n_neighbors: 5, add_indicator: false}}
@@ -56,48 +56,78 @@ preprocessing:
     - commercial_region
 
 preprocessing_experiment:
-  # Grid search: test all combinations of the candidate lists below.
-  # The current preprocessing is always included as a reference.
+  # All combinations; current preprocessing also included as a reference.
   candidates:
-    scaler: [none, standard, robust]
-    numeric_imputer: [median, mean]
-    categorical_imputer: [constant, most_frequent]
+    scaler: [none, standard, minmax, robust, maxabs, normalize, power, quantile]
+    numeric_imputer: [median, mean, most_frequent, constant, knn, none]
+    categorical_imputer: [constant, most_frequent, none]
     encoder: [onehot, ordinal]
   # Candidates may also use {type: name, params: {...}}, just like preprocessing.
-  # 24 combinations x 5 folds = 120 fits per model. Extend these lists as needed.
+  # 288 combinations x 5 folds = 1,440 fits per model (plus reference if different).
+
+tuning:
+  enabled: true # train tunes the task's selected model first when true
+  n_trials: 30 # per model, including failed trials
+  timeout_seconds: null # optional time limit per model; a running trial finishes
+  # Uses current preprocessing and threshold, independently of preprocessing_experiment.
+  # Each model's search_space overrides only its named params during tuning.
+  # Types: int / float (low, high, optional step or log), categorical (choices).
 
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1 # the Kaggle metric; must be one of metrics
   threshold: 0.5 # probability from which a customer is predicted to return
-  model: random_forest # the one that `train` saves; must be a name in models
+  model: xgboost # the one that `train` saves; must be a name in models
   models: # every model that `compare` cross-validates, with its params
-    logistic_regression: { params: { max_iter: 2000 } }
-    random_forest: { params: { n_estimators: 300, min_samples_leaf: 5 } }
-    hist_gradient_boosting: { params: { learning_rate: 0.05, max_iter: 200 } }
+    logistic_regression:
+      params: { max_iter: 2000 }
+      search_space:
+        C: { type: float, low: 0.001, high: 100.0, log: true }
+        class_weight: { type: categorical, choices: [null, balanced] }
+    random_forest:
+      params: { n_estimators: 300, min_samples_leaf: 5 }
+      search_space:
+        n_estimators: { type: int, low: 100, high: 600, step: 100 }
+        min_samples_leaf: { type: int, low: 1, high: 20 }
+        max_depth: { type: categorical, choices: [null, 5, 10, 20, 40] }
+        max_features: { type: categorical, choices: [sqrt, log2, 0.7, 1.0] }
+    hist_gradient_boosting:
+      params: { learning_rate: 0.05, max_iter: 200 }
+      search_space:
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        max_iter: { type: int, low: 100, high: 500, step: 100 }
+        max_leaf_nodes: { type: int, low: 15, high: 63 }
+        l2_regularization: { type: float, low: 0.0001, high: 10.0, log: true }
     xgboost:
-      { params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 } }
+      params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 }
+      search_space:
+        n_estimators: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        max_depth: { type: int, low: 2, high: 8 }
+        subsample: { type: float, low: 0.6, high: 1.0 }
+        colsample_bytree: { type: float, low: 0.6, high: 1.0 }
     lightgbm:
-      {
-        params:
-          {
-            n_estimators: 200,
-            learning_rate: 0.05,
-            num_leaves: 15,
-            verbose: -1,
-          },
-      }
+      params:
+        { n_estimators: 200, learning_rate: 0.05, num_leaves: 15, verbose: -1 }
+      search_space:
+        n_estimators: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        num_leaves: { type: int, low: 8, high: 63 }
+        min_child_samples: { type: int, low: 10, high: 80 }
     catboost:
-      {
-        params:
-          {
-            iterations: 300,
-            learning_rate: 0.05,
-            depth: 6,
-            verbose: 0,
-            allow_writing_files: false,
-          },
-      }
+      params:
+        {
+          iterations: 300,
+          learning_rate: 0.05,
+          depth: 6,
+          verbose: 0,
+          allow_writing_files: false,
+        }
+      search_space:
+        iterations: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        depth: { type: int, low: 4, high: 8 }
+        l2_leaf_reg: { type: float, low: 0.1, high: 10.0, log: true }
 
 regression:
   metrics: [rmse, mae, r2] # measured in EUR, on customers who really returned
@@ -107,39 +137,60 @@ regression:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
   models: # every model that `compare` cross-validates, with its params
-    ridge: { params: { alpha: 1.0 }, log_target: false }
+    ridge:
+      params: { alpha: 1.0 }
+      log_target: false
+      search_space:
+        alpha: { type: float, low: 0.001, high: 1000.0, log: true }
     random_forest:
-      { params: { n_estimators: 300, min_samples_leaf: 5 }, log_target: false }
+      params: { n_estimators: 300, min_samples_leaf: 5 }
+      log_target: false
+      search_space:
+        n_estimators: { type: int, low: 100, high: 600, step: 100 }
+        min_samples_leaf: { type: int, low: 1, high: 20 }
+        max_depth: { type: categorical, choices: [null, 5, 10, 20, 40] }
+        max_features: { type: categorical, choices: [sqrt, log2, 0.7, 1.0] }
     hist_gradient_boosting:
-      { params: { learning_rate: 0.05, max_iter: 200 }, log_target: false }
+      params: { learning_rate: 0.05, max_iter: 200 }
+      log_target: false
+      search_space:
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        max_iter: { type: int, low: 100, high: 500, step: 100 }
+        max_leaf_nodes: { type: int, low: 15, high: 63 }
+        l2_regularization: { type: float, low: 0.0001, high: 10.0, log: true }
     xgboost:
-      {
-        params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 },
-        log_target: false,
-      }
+      params: { n_estimators: 200, learning_rate: 0.05, max_depth: 4 }
+      log_target: false
+      search_space:
+        n_estimators: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        max_depth: { type: int, low: 2, high: 8 }
+        subsample: { type: float, low: 0.6, high: 1.0 }
+        colsample_bytree: { type: float, low: 0.6, high: 1.0 }
     lightgbm:
-      {
-        params:
-          {
-            n_estimators: 200,
-            learning_rate: 0.05,
-            num_leaves: 15,
-            verbose: -1,
-          },
-        log_target: false,
-      }
+      params:
+        { n_estimators: 200, learning_rate: 0.05, num_leaves: 15, verbose: -1 }
+      log_target: false
+      search_space:
+        n_estimators: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        num_leaves: { type: int, low: 8, high: 63 }
+        min_child_samples: { type: int, low: 10, high: 80 }
     catboost:
-      {
-        params:
-          {
-            iterations: 300,
-            learning_rate: 0.05,
-            depth: 6,
-            verbose: 0,
-            allow_writing_files: false,
-          },
-        log_target: false,
-      }
+      params:
+        {
+          iterations: 300,
+          learning_rate: 0.05,
+          depth: 6,
+          verbose: 0,
+          allow_writing_files: false,
+        }
+      log_target: false
+      search_space:
+        iterations: { type: int, low: 100, high: 500, step: 100 }
+        learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+        depth: { type: int, low: 4, high: 8 }
+        l2_leaf_reg: { type: float, low: 0.1, high: 10.0, log: true }
 
 outputs:
   submission: outputs/submission.csv

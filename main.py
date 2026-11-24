@@ -11,6 +11,7 @@ Entry point. Run from the repository root:
     python main.py client --input examples/new_customer.json
 """
 import argparse
+import copy
 import json
 import os
 import time
@@ -21,6 +22,7 @@ import pandas as pd
 from sklearn.base import clone
 
 from src.cleaning import drop_empty_rows
+from src.tuning import run_tuning
 from src.data import load_config, load_data
 from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout, TimeCalendarSplit
 from src.features import prepare, split_features_target
@@ -116,7 +118,10 @@ def train(args):
     training row -> saved model + scoreboard row + full report.
     """
     task = args.task
-    config = load_config(getattr(args, "config", "config.yaml"))
+    config = copy.deepcopy(load_config(getattr(args, "config", "config.yaml")))
+    tuning_enabled = config.get("tuning", {}).get("enabled", False)
+    if not isinstance(tuning_enabled, bool):
+        raise ValueError("tuning.enabled must be true or false")
     task_config = config[task]
     metrics = task_config["metrics"]
     selection_metric = task_config["selection_metric"]
@@ -124,15 +129,19 @@ def train(args):
     if model_type not in task_config["models"]:
         raise SystemExit(f"config.yaml: {task}.model is '{model_type}', which is not in {task}.models. "
                          f"Options: {list(task_config['models'])}")
-    model_config = {"type": model_type, **task_config["models"][model_type]}
-    model_config = {"type": model_type, **task_config["models"][model_type]} 
-    model_params = model_config.get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     rows, dev, holdout, cv = load_training_splits(config, task)
     validation = config["validation"]
     X_dev, y_dev = split_features_target(dev, config, task)
     X_holdout, y_holdout = split_features_target(holdout, config, task)
+    if tuning_enabled:
+    
+        _, tuned = run_tuning(config, task, X_dev, y_dev, cv)
+        task_config["models"][model_type]["params"] = json.loads(tuned.iloc[0]["params"])
+        print(f"Using tuned parameters: {task_config['models'][model_type]['params']}")
+    model_config = {"type": model_type, **task_config["models"][model_type]}
+    model_params = model_config.get("params")
     print(f"Task: {task}   |   model: {model_type}   |   selection metric: {selection_metric}")
     print(f"Data: {len(dev)} development rows   |   {len(holdout)} hold-out rows (most recent, "
           f"from {holdout[validation['date_col']].min()})")
