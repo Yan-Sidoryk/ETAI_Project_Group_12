@@ -11,11 +11,19 @@ from src.cleaning import clean_dataset
 
 
 def prepare(df: pd.DataFrame, clients: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Clean purchases, join customer attributes, and add row-local features.
+    """Clean purchase records, attach customer attributes, and derive features.
 
-    This preparation learns nothing from the data and preserves purchase rows.
-    Imputation, encoding and scaling are fitted separately inside the pipeline.
-    """
+        Apply the cleaning rules in `config["diagnosis"]`, then left-join the
+        customer columns in `config["client_columns"]` on `customer_id`. The join
+        keeps purchases with no matching customer and can duplicate purchase
+        rows if `clients` contains multiple matches for a customer.
+
+        Set `is_first_purchase` to 1 when `prior_purchase_count` is zero and to 0
+        otherwise. Extract `purchase_month` as the calendar month (1–12) from
+        `purchase_date`.
+
+        Imputation, encoding, and scaling are fitted separately in the pipeline.
+        """
     out = clean_dataset(df, config["diagnosis"])
     client_columns = ["customer_id"] + config["client_columns"]
     out = out.merge(clients[client_columns], on="customer_id", how="left")
