@@ -1,6 +1,7 @@
 """
 Entry point. Run from the repository root:
 
+    python main.py experiment --task classification
     python main.py compare --task classification
     python main.py compare --task regression
     python main.py train --task classification
@@ -23,6 +24,7 @@ from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
 from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout, TimeCalendarSplit
 from src.features import prepare, split_features_target
+from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
 from src.model import FLOOR, build_pipeline
 from src.results import save_run, save_scores
@@ -65,7 +67,7 @@ def compare(args):
     touched, so this table can be used to choose config[task]["model"].
     """
     task = args.task
-    config = load_config()
+    config = load_config(getattr(args, "config", "config.yaml"))
     task_config = config[task]
     metrics, selection_metric = task_config["metrics"], task_config["selection_metric"]
 
@@ -96,6 +98,16 @@ def compare(args):
           f"(now: {task_config['model']})")
 
 
+def experiment(args):
+    """Search preprocessing on development folds, leaving the holdout unscored."""
+    config = load_config(getattr(args, "config", "config.yaml"))
+    _, dev, _, cv = load_training_splits(config, args.task)
+    X, y = split_features_target(dev, config, args.task)
+    _, table = run_preprocessing_experiment(config, args.task, X, y, cv, getattr(args, "models", None))
+    if not (table["status"] == "ok").any():
+        raise SystemExit("No successful preprocessing candidates; inspect the saved errors.")
+
+
 # Route 2: evaluate, refit and save one selected model
 def train(args):
     """
@@ -104,7 +116,7 @@ def train(args):
     training row -> saved model + scoreboard row + full report.
     """
     task = args.task
-    config = load_config()
+    config = load_config(getattr(args, "config", "config.yaml"))
     task_config = config[task]
     metrics = task_config["metrics"]
     selection_metric = task_config["selection_metric"]
@@ -253,10 +265,18 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
 
     p = commands.add_parser("compare", help="cross-validate every configured model of one task")
+    p.add_argument("--config", default="config.yaml", help="YAML configuration path")
     p.add_argument("--task", required=True, choices=["classification", "regression"])
     p.set_defaults(run=compare)
 
+    p = commands.add_parser("experiment", help="compare YAML preprocessing candidates on development folds")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.add_argument("--config", default="config.yaml", help="YAML configuration path")
+    p.add_argument("--models", nargs="+", help="configured model names; defaults to the task's selected model")
+    p.set_defaults(run=experiment)
+
     p = commands.add_parser("train", help="train one task from the raw data and save the model")
+    p.add_argument("--config", default="config.yaml", help="YAML configuration path")
     p.add_argument("--task", required=True, choices=["classification", "regression"])
     p.set_defaults(run=train)
 

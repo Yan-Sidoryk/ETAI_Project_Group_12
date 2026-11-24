@@ -96,6 +96,9 @@ Current settings include:
 | `validation.holdout_fraction` | `0.2` | Reserves the latest 20% of usable rows |
 | `validation.n_splits` | `5` | Number of expanding-window development folds |
 | `preprocessing.scaler` | `standard` | Standardizes numeric values after imputation |
+| `preprocessing.numeric_imputer` | `median` | Configurable numeric imputation; missingness indicators enabled by default |
+| `preprocessing.categorical_imputer` | `constant` | Configurable categorical imputation; defaults to filling with `"missing"` |
+| `preprocessing.encoder` | `onehot` | One-hot or ordinal encoding |
 | `preprocessing.min_frequency` | `20` | Groups categorical levels occurring fewer than 20 times in a fit |
 | `classification.model` | `xgboost` | Classifier fitted and saved by the classification command |
 | `classification.selection_metric` | `f1` | Primary classification metric |
@@ -105,7 +108,7 @@ Current settings include:
 
 The route also generates a run identifier using local time with the format `YYYYMMDD_HHMMSS`. It is used in the artifact, scoreboard, and report filename.
 
-Paths are relative to the current working directory, so commands should run from the repository root. There is no `train --config` or command-line hyperparameter override in the current parser; edit the YAML settings to change them.
+Paths are relative to the current working directory, so commands should run from the repository root. Edit `config.yaml` to change settings; `compare`, `experiment`, and `train` also accept an optional `--config` path.
 
 ## 4. Loading data and removing empty training rows
 
@@ -263,7 +266,7 @@ Pipeline
 └── model: selected estimator, optionally wrapped for target transformation
 ```
 
-[`build_preprocessor`](../src/preprocessing.py) defines the transformations. Building it does not fit anything; `.fit(...)` learns its state.
+[`build_preprocessor`](../src/preprocessing.py) defines the transformations. Building it does not fit anything; `.fit(...)` learns its state. The diagram and descriptions below show the default configuration. All four components can be selected by name or with `{type: name, params: {...}}`; see [Choosing preprocessing](../README.md#choosing-preprocessing) for the full options and examples.
 
 ### 9.1 Categorical columns
 
@@ -287,7 +290,18 @@ Every remaining input column is treated as numeric and passes through:
 
 Because scaling follows imputation, appended missingness flags are scaled too. An indicator is not created merely because a feature first becomes missing in validation; indicator creation depends on missingness observed during fitting. Entirely empty numeric columns follow `SimpleImputer`'s default behavior; the repository does not explicitly configure `keep_empty_features`.
 
-The alternatives are `none` (pass through), `minmax`, and `robust`. All candidate algorithms currently use the same configured preprocessing. CatBoost, XGBoost, and LightGBM receive the transformed numeric matrix; CatBoost is not using its native categorical-feature mechanism here.
+Scaler alternatives are `none` (pass through), `minmax`, `robust`, `maxabs`, `normalize`, `power`, and `quantile`. Numeric imputers also support `mean`, `most_frequent`, `constant`, `knn`, and `none`; categorical imputers support `most_frequent` and `none`. The alternative encoder is `ordinal`, which uses -1 for unseen categories by default. Explicit component parameters override defaults, including the shared `min_frequency` setting for either encoder. All candidate algorithms use the same configured preprocessing. CatBoost, XGBoost, and LightGBM receive the transformed numeric matrix; CatBoost is not using its native categorical-feature mechanism here.
+
+`python main.py experiment --task classification` (or `regression`) compares candidate
+lists from `preprocessing_experiment` on identical development folds. It performs a full grid
+search, with optional `--models` to compare several configured models.
+It never scores the holdout or saves fitted models. Each run saves summary and per-fold CSVs
+in a unique output folder and updates a fixed latest-summary CSV. Model and preprocessing
+choices are recorded in separate `model`, `scaler`, `numeric_imputer`, `categorical_imputer`,
+and `encoder` columns, with `candidate` and `task` identifying results. It generates
+no YAML files; selected settings are applied manually to the existing `config.yaml`.
+See [Comparing preprocessing automatically](../README.md#comparing-preprocessing-automatically)
+for configuration and training examples.
 
 ### 9.3 Why preprocessing is fitted inside each fold
 
