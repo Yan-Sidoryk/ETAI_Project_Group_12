@@ -6,19 +6,20 @@ See [docs/guidelines.md](docs/guidelines.md) for the full brief.
 ## Structure
 
 ```
-main.py         entry point: compare | train | predict | client
+main.py         entry point: compare | experiment | train | predict | client
 config.yaml     paths, seed, validation, preprocessing, models, hyperparameters, outputs
 diagnosis.yaml  data-cleaning rules (ranges, placeholder values, consistency checks and their fixes)
 src/
   data.py           load config.yaml + diagnosis.yaml, read the CSVs
   cleaning.py       rule checks and repairs from diagnosis.yaml; training-only empty-row removal
   features.py       prepare(): clean, join clientes.csv, add_features(); split X and y
-  preprocessing.py  imputation, scaling, one-hot encoding (fitted inside the model pipeline)
+  preprocessing.py  configurable imputation, scaling, encoding (fitted inside the model pipeline)
   model.py          model registry per task, baseline ("floor") models, build_pipeline()
   evaluate.py       time-ordered hold-out and CV folds with a calendar gap, metrics, CV reports
+  experiments.py    preprocessing grid search, summaries, fold scores
   inference.py      load saved models; shared classify / predict_spend for predict and client
   results.py        scoreboard and run reports
-tests/          integration tests for the four commands
+tests/          preprocessing, experiments, and command integration tests
 examples/       client inputs: returning_customer.json, new_customer.json
 data/           raw input CSVs (train, test, clientes, sample_submission)
 docs/           project brief (PDF + guidelines.md) and column descriptions
@@ -125,6 +126,138 @@ raw rows ──> clean (diagnosis.yaml) ──> join clientes.csv ──> add_fe
 - **Not used as features:** IDs, `purchase_date` (splitting only), `random_noise`, both targets, and the
   `clientes.csv` columns other than `country_or_region`, `commercial_region` and `customer_since_year`
   (mostly missing or almost unique per customer).
+
+### Choosing preprocessing
+
+Edit `preprocessing` in `config.yaml`. Each component accepts a name or
+`{type: name, params: {...}}`, where `params` contains scikit-learn constructor parameters.
+The current choices preserve the original preprocessing:
+
+```yaml
+preprocessing:
+  scaler: standard
+  numeric_imputer: median
+  categorical_imputer: constant
+  encoder: onehot
+  min_frequency: 20
+  categorical_features: # keep the existing list of eight columns
+    - payment_type
+    - salesperson
+    - commercial_zone
+    - transport_method
+    - warehouse
+    - document_series
+    - country_or_region
+    - commercial_region
+```
+
+| Setting | Supported names | Defaults / behavior |
+| --- | --- | --- |
+| `scaler` | `standard`, `minmax`, `robust`, `maxabs`, `normalize`, `power`, `quantile`, `none` | Applied after numeric imputation; `normalize` normalizes each row, `power` defaults to Yeo-Johnson, `quantile` to a uniform distribution with random seed 42 |
+| `numeric_imputer` | `median`, `mean`, `most_frequent`, `constant`, `knn`, `none` | Missingness indicators enabled except for `none`; `constant` fills with 0 |
+| `categorical_imputer` | `constant`, `most_frequent`, `none` | `constant` fills with `"missing"` |
+| `encoder` | `onehot`, `ordinal` | Dense one-hot output ignores unseen levels; ordinal output uses -1 for unseen levels |
+
+For example, replace the corresponding settings with:
+
+```yaml
+  scaler: {type: robust, params: {quantile_range: [10, 90]}}
+  numeric_imputer: {type: knn, params: {n_neighbors: 5, add_indicator: false}}
+  categorical_imputer: most_frequent
+  encoder: {type: ordinal, params: {min_frequency: 10}}
+```
+
+`min_frequency` applies to both encoders; `encoder.params.min_frequency` overrides it
+(use `null` to disable grouping). Older configs without imputer or encoder settings keep
+the original defaults. `none` skips that step and does not accept parameters. Skipping
+imputation leaves missing values for later steps and the estimator to handle.
+
+Ordinal encoding assigns numeric codes that introduce an ordering between categories.
+KNN imputation measures distances before scaling in this pipeline, so feature units affect
+its neighbors; it can also be slower on large datasets. Power/quantile transforms also
+operate on any appended numeric missingness indicators; set `add_indicator: false` if
+you want to avoid that. Transformer parameter constraints still apply (for example,
+Box-Cox requires positive inputs).
+
+Run `compare` again to assess each configuration on the development folds, then `train`
+to save a model using those choices. Saved models retain their fitted preprocessing;
+editing YAML alone does not change their predictions. See the
+[scikit-learn preprocessing guide](https://scikit-learn.org/stable/modules/preprocessing.html),
+[KNNImputer reference](https://scikit-learn.org/stable/modules/generated/sklearn.impute.KNNImputer.html),
+and [OrdinalEncoder reference](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html)
+for parameter details.
+
+### Comparing preprocessing automatically
+
+Run the new experiment command from the repository root:
+
+```bash
+python main.py experiment --task classification
+python main.py experiment --task regression
+```
+
+By default each task uses its selected model (`classification.model` or `regression.model`)
+and the candidate lists in `preprocessing_experiment` in YAML:
+
+```yaml
+preprocessing_experiment:
+  candidates:
+    scaler: [none, standard, robust]
+    numeric_imputer: [median, mean]
+    categorical_imputer: [constant, most_frequent]
+    encoder: [onehot, ordinal]
+```
+
+This grid has 24 combinations and 120 fits per model with five folds. Each component
+may also contain parameter mappings, such as `{type: knn, params: {n_neighbors: 3}}`.
+Omitted components retain their current `preprocessing` settings. The current full
+configuration is always included as a reference, with exact duplicate settings removed.
+
+Grid search evaluates every combination. To compare several models on the same grid:
+
+```bash
+python main.py experiment --task classification --models logistic_regression xgboost
+python main.py experiment --task regression --models ridge catboost
+```
+
+Every candidate uses identical development folds and the existing calendar gap, with
+fresh preprocessing fitted inside each fold. The holdout is set aside and never scored
+by `experiment`; existing model artifacts are not overwritten.
+
+Each invocation creates `outputs/preprocessing_<task>_<timestamp>/` containing:
+
+- `summary.csv`: ranked results with `candidate`, `task`, `model`, `scaler`,
+  `numeric_imputer`, `categorical_imputer`, and `encoder` columns,
+  metric means/stds, training-validation gap, runtime, and failure details.
+- `folds.csv`: metrics for each successful combination's individual folds, linked by
+  `candidate` and carrying the same model and preprocessing columns.
+
+Simple preprocessing choices appear as names; choices with custom parameters appear as
+JSON in the corresponding component column. Model hyperparameters and shared preprocessing
+settings remain in your existing `config.yaml`. Experiments generate CSV files only.
+
+For a fixed CSV path that updates on every run, open
+`outputs/preprocessing_classification_summary.csv` or
+`outputs/preprocessing_regression_summary.csv`. This latest summary is overwritten after
+each completed candidate. The timestamped folders retain their own results unchanged.
+
+Classification F1 is ranked highest first; regression RMSE is ranked lowest first. Failed
+combinations are recorded at the bottom and excluded from selection. Results are saved after
+each candidate, and separate experiment folders preserve earlier comparisons. If all candidates
+fail, the command exits with an error and retains diagnostics.
+
+Use the CV mean, variation between folds, and runtime to assess the winner. After making your
+choice, update the four `preprocessing` choices and the task's `model` in your existing
+`config.yaml` from the corresponding columns in the selected row. Then evaluate it on the holdout
+and save the trained model:
+
+```bash
+python main.py train --task classification
+python main.py train --task regression
+```
+
+Set the chosen preprocessing before training each task if their winning settings differ.
+Each saved model retains its own fitted preprocessing.
 
 ### Status (17 Nov 2026)
 
