@@ -95,7 +95,7 @@ def train(args):
     metrics = task_config["metrics"]
     selection_metric = task_config["selection_metric"]
     model_type = task_config["model"]
-    model_config = {"type": model_type, **task_config["models"][model_type]}
+    model_config = {"type": model_type, **task_config["models"][model_type]} 
     model_params = model_config.get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
