@@ -167,7 +167,6 @@ def train(args):
         raise SystemExit(f"config.yaml: {task}.model is '{model_type}', which is not in {task}.models. "
                          f"Options: {list(task_config['models'])}")
     model_config = {"type": model_type, **task_config["models"][model_type]}
-    model_config = {"type": model_type, **task_config["models"][model_type]} 
     model_params = model_config.get("params")
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
 
