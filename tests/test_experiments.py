@@ -40,6 +40,25 @@ class PreprocessingExperimentsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-empty list"):
             preprocessing_candidates(self.config)
 
+    def test_soft_voting_builds_its_members_from_their_entries(self):
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+        from xgboost import XGBClassifier
+        from src.model import build_estimator
+        models = self.config["classification"]["models"]
+        models["rf"] = {"params": {"n_estimators": 7}, "type": "random_forest"}
+        models["xgb"] = {"params": {"max_depth": 2}, "type": "xgboost"}
+        voting = build_estimator("classification", self.config,
+                                 {"type": "voting", "params": {"members": ["rf", "xgb"]}})
+        self.assertIsInstance(voting, VotingClassifier)
+        self.assertEqual(voting.voting, "soft")
+        (rf_name, rf), (xgb_name, xgb) = voting.estimators
+        self.assertEqual((rf_name, xgb_name), ("rf", "xgb"))
+        self.assertIsInstance(rf, RandomForestClassifier)
+        self.assertEqual((rf.n_estimators, rf.random_state), (7, self.config["seed"]))
+        self.assertIsInstance(xgb, XGBClassifier)
+        with self.assertRaisesRegex(ValueError, "classification only"):
+            build_estimator("regression", self.config, {"type": "voting", "params": {"members": ["rf"]}})
+
     def test_task_preprocessing_overrides_shared_settings(self):
         from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
         from src.model import build_pipeline

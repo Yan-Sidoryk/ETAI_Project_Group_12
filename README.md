@@ -273,7 +273,7 @@ XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibil
 | Task | Model | CV (5 folds) | Floor | Hold-out |
 |---|---|---|---|---|
 | Classification (F1) | random forest | 0.742 ± 0.018 | 0.712 | 0.771 (floor 0.753), ROC-AUC 0.808 |
-| Regression (RMSE, EUR) | random forest | 1,975 ± 123 | 2,472 | 2,501 (floor 3,289), MAE 1,298, R² 0.42 |
+| Regression (RMSE, EUR) | LightGBM (tuned) | 1,955 ± 178 | 2,472 | 2,528 (floor 3,289), MAE 1,273, R² 0.40 |
 
 Preprocessing (25 Nov 2026): `robust` scaler, `median` imputer, `constant` for missing categories; encoder `ordinal`
 for classification and `onehot` for regression (`regression.preprocessing` overrides the shared settings). The
@@ -296,6 +296,18 @@ model against the best with the corrected paired t-test (Nadeau & Bengio) on the
 - Regression: random forest 1,975; no model differs significantly (all p >= 0.18; even the floor, +497 EUR, has
   p 0.053). With 5 folds and noisy RMSE the test has little power: "not significant" means "cannot tell apart".
 - Candidates for tuning: random forest and XGBoost (classification), random forest and LightGBM (regression).
+
+Tuning (25 Nov 2026): `python main.py tune --task <task> --model <name>` runs Optuna (40 trials, seeded) on the
+development folds; the configured params are scored first as the score to beat. The best params are in `config.yaml`
+as `<name>_tuned` entries and were checked with `compare` (best of 40 trials is slightly optimistic):
+- Classification: random forest gained nothing (0.752 both; the defaults were already as good). XGBoost 0.745 -> 0.750
+  with shallow trees (`max_depth` 2), its train-validation gap falling from 0.139 to 0.012.
+- Soft voting of random forest and tuned XGBoost (`soft_voting`, averaged probabilities): 0.749, no gain over
+  random forest (p 0.61). Classification stays random forest.
+- Regression: LightGBM 2,002 -> 1,955 (best CV, gap -1,247 -> -787, about 10x faster than random forest), random
+  forest 1,975 -> 1,964. Not significantly different (p 0.69). Regression now saves `lightgbm_tuned`. Its hold-out
+  RMSE is 2,528 against 2,501 for random forest, MAE 1,273 against 1,298: mixed and within noise; the choice was
+  made on CV, not on the hold-out.
 
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
@@ -336,7 +348,7 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 
 1. **Threshold tuning** on out-of-fold probabilities; an early check (logistic regression, before the
    90-day gap) gave CV F1 0.742 at threshold 0.35 against 0.714 at 0.5 [classification metrics 0.5].
-2. **Hyperparameter tuning** with Optuna, scored by the same gapped CV [tuning 0.75 + regression 1.5].
+2. **Hyperparameter tuning:** done, `tune` command (see status) [tuning 0.75 + regression 1.5].
 3. **Feature engineering** in `add_features()`: first set done; selection keeps most of them in some folds
    [preprocessing and FE 1 + regression 1.5].
 4. **Feature selection:** done, per fold in the pipeline; notebook 02 explains the method (see status)

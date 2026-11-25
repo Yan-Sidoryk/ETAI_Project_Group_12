@@ -10,7 +10,7 @@ from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (HistGradientBoostingClassifier, HistGradientBoostingRegressor,
-                              RandomForestClassifier, RandomForestRegressor)
+                              RandomForestClassifier, RandomForestRegressor, VotingClassifier)
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier, XGBRegressor
@@ -53,19 +53,23 @@ def task_preprocessing(config: dict, task: str) -> dict:
     return {**config["preprocessing"], **(config[task].get("preprocessing") or {})}
 
 
-def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
-    """Build an unfitted preprocessing/model pipeline from explicit model settings.
-
-    `model_config` contains "type", optional "params", and optional "log_target".
-    Each fold fits its own preprocessing. The seed is used unless params already
-    specify random_state. A log-target regressor converts predictions back to EUR.
-    Steps: "select" (per-fold feature selection, when feature_selection.method is "permutation"), "prep", "model".
+def build_estimator(task: str, config: dict, model_config: dict):
     """
-    registry = _MODELS[task]
+    The unfitted model of one `models` entry. Type "voting" (classification) averages the predicted probabilities
+    of the configured models named in params.members (soft voting); each member is built from its own entry.
+    """
     model_type = model_config["type"]
+    params = dict(model_config.get("params") or {})
+    if model_type == "voting":
+        if task != "classification":
+            raise ValueError("Soft voting is configured for classification only")
+        members = params.pop("members")
+        estimators = [(name, build_estimator(task, config, {"type": name, **config[task]["models"][name]}))
+                      for name in members]
+        return VotingClassifier(estimators, voting="soft", **params)
+    registry = _MODELS[task]
     if model_type not in registry:
-        raise ValueError(f"Unknown {task} model: {model_type}. Options: {list(registry)}")
-    params = model_config.get("params") or {}
+        raise ValueError(f"Unknown {task} model: {model_type}. Options: {list(registry) + ['voting']}")
     model = registry[model_type](**params)
     if "random_state" not in params:
         try:
@@ -74,6 +78,19 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
             pass
     if model_config.get("log_target"):
         model = TransformedTargetRegressor(regressor=model, func=np.log1p, inverse_func=np.expm1)
+    return model
+
+
+def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
+    """Build an unfitted preprocessing/model pipeline from explicit model settings.
+
+    `model_config` contains "type", optional "params", and optional "log_target".
+    Each fold fits its own preprocessing. The seed is used unless params already
+    specify random_state. A log-target regressor converts predictions back to EUR.
+    Steps: "select" (per-fold feature selection, when feature_selection.method is "permutation"), "prep", "model".
+    """
+    model_type = model_config["type"]
+    model = build_estimator(task, config, model_config)
 
     preprocessing = task_preprocessing(config, task)
     preprocessor = build_preprocessor(preprocessing)

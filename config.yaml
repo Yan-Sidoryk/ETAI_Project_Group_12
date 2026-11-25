@@ -124,6 +124,8 @@ classification:
         params: { n_estimators: 565, learning_rate: 0.0107, max_depth: 2, min_child_weight: 19.94,
                   subsample: 0.8376, colsample_bytree: 0.9821, reg_lambda: 0.01365 },
       }
+    # Soft voting: the average of the members' predicted probabilities (each member is its own entry above)
+    soft_voting: { type: voting, params: { members: [random_forest, xgboost_tuned] } }
 
 regression:
   # Overrides the shared `preprocessing` for this task only. The 25 Nov grid (random forest): one-hot beat
@@ -131,7 +133,7 @@ regression:
   preprocessing: { encoder: onehot }
   metrics: [rmse, mae, r2]    # measured in EUR, on customers who really returned
   selection_metric: rmse      # lower is better; must be one of metrics
-  model: random_forest        # the one that `train` saves; must be a name in models
+  model: lightgbm_tuned       # the one that `train` saves; must be a name in models
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
