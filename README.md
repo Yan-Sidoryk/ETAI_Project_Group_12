@@ -6,7 +6,7 @@ See [docs/guidelines.md](docs/guidelines.md) for the full brief.
 ## Structure
 
 ```
-main.py         entry point: compare | experiment | train | predict | client
+main.py         entry point: compare | experiment | tune | train | predict | explain | client
 config.yaml     paths, seed, validation, preprocessing, models, hyperparameters, outputs
 diagnosis.yaml  data-cleaning rules (ranges, placeholder values, consistency checks and their fixes)
 src/
@@ -71,6 +71,8 @@ python main.py train --task classification   # saves models/classifier.joblib
 python main.py train --task regression       # saves models/regressor.joblib
 python main.py predict                       # needs both models
 python main.py client --input examples/returning_customer.json   # one purchase, needs both models
+python main.py explain --task classification   # SHAP: outputs/shap_<task>_global.csv and _beeswarm.png
+python main.py explain --task regression
 ```
 
 `predict` writes two files:
@@ -288,6 +290,12 @@ per fold 0.38, 0.42, 0.37, 0.42, 0.43 (stable over time), CV F1 0.752 at 0.41 vs
 chosen and scored on the same rows), hold-out F1 0.791 at 0.41 vs 0.771 at 0.5. Boosting models gain more
 (XGBoost 0.725 -> 0.745, CatBoost 0.720 -> 0.742), so model selection should compare F1 at each model's best threshold.
 
+Final threshold (25 Nov 2026): 0.41, chosen on training data only. Best threshold per validation block, oldest to
+newest: 0.38, 0.42, 0.36, 0.42, 0.42 (no drift; the most recent block, Nov 2021 - Mar 2023, also prefers 0.42).
+Pooled F1 is within 0.003 of its best from 0.38 to 0.42, and 0.5 is lower in every fold (pooled 0.743 vs 0.752).
+The return rate per block (59, 54, 58, 55, 50%, hold-out ~60%) shows no steady trend. On Kaggle, 0.5 scored 0.809
+and 0.41 scored 0.799: a disagreement of the same size as the fold noise, not explained by the training data.
+
 Model selection (25 Nov 2026): `compare` ranks classification by F1 at each model's best threshold and tests every
 model against the best with the corrected paired t-test (Nadeau & Bengio) on the same 5 folds (`p_vs_best`).
 - Classification: random forest 0.752; XGBoost 0.745 (p 0.20), CatBoost 0.742 (p 0.36) and hist gradient boosting
@@ -318,6 +326,17 @@ plausible for business customers, so they are kept. Loss variants of `lightgbm_t
 Every loss that downweights the extremes lowers MAE slightly and raises RMSE, because RMSE is minimised by the mean;
 outlier removal and target clipping act the same way more bluntly and were not pursued. All differences are within
 fold noise (p >= 0.07).
+
+Explainability (25 Nov 2026, `src/explain.py`, SHAP TreeExplainer on the saved models). Rows pass through the saved
+pipeline's own selection and preprocessing; one-hot levels and missing flags are summed back into their raw feature,
+and base value + contributions equals each prediction exactly (checked in the tests).
+- Global (`explain`, on the 986 test purchases): classification is driven by purchase frequency and recency of activity
+  (`purchase_count_365d`, `purchase_rate`, `spend_365d`, all raising the probability), then margin and discounts;
+  longer gaps (`days_since_previous_purchase`, `prior_std_gap_days`) and newer customers (`customer_since_year`) lower it.
+  Regression is driven by past spend (`spend_365d`, about 590 EUR average effect; `prior_total_spend`, typical order
+  size) and the purchase month (seasonality).
+- Per purchase (`client`): the five features that moved the probability (percentage points) and the spend (EUR) most
+  from the average prediction, e.g. a new customer is pulled down by having no purchases in the last year.
 
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
@@ -366,7 +385,7 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 5. **Preprocessing comparison:** encoders, scalers, imputers [preprocessing and FE].
 6. **Statistical model comparison:** done, `p_vs_best` in `compare` (see status) [model assessment].
 7. **Client history lookup:** fill history fields from `train.csv` given a `customer_id` [deployment 1].
-8. **Explainability:** SHAP for both models, global and per customer, in a new `src/explain.py` [explainability 1.5].
+8. **Explainability:** done, `explain` command and per-purchase reasons in `client` (see status) [explainability 1.5].
 9. **Open-ended objective:** error analysis, stability over time or spend uncertainty [open-ended 1.5].
 
 ### Known issues

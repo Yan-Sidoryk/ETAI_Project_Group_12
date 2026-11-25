@@ -105,11 +105,26 @@ class PipelineRoutesTest(unittest.TestCase):
         single_probability, _ = classify(classifier, test.iloc[[0]], clients)
         np.testing.assert_allclose(single_probability, batch_probability[:1])
 
+    def test_shap_explanations_add_up_to_the_predictions(self):
+        from src.explain import model_inputs, shap_values
+        test, clients = pd.read_csv(self.config["paths"]["test"]).head(20), pd.read_csv(self.config["paths"]["clients"])
+        for task in ("classification", "regression"):
+            model = load_model(self.config, task)
+            X = model_inputs(model, test, clients, task)
+            raw, base, _ = shap_values(model, X, task)
+            prediction = (model["pipeline"].predict_proba(X)[:, 1] if task == "classification"
+                          else model["pipeline"].predict(X))
+            np.testing.assert_allclose(base + raw.sum(axis=1), prediction, atol=1e-6)
+            self.assertNotIn("random_noise", raw.columns)  # only features the model actually uses
+            self.run_route(main.explain, task=task)
+            self.assertTrue((Path(self.config["paths"]["outputs_dir"]) / f"shap_{task}_beeswarm.png").exists())
+
     def test_client_examples_and_negative_decision_gate(self):
         for name in ("new_customer", "returning_customer"):
             output = self.run_route(main.client, input=f"examples/{name}.json")
             self.assertIn("Probability of buying again within 90 days:", output)
             self.assertIn("Expected spend in the next 90 days:", output)
+            self.assertIn("Why this probability", output)
 
         path = Path(self.config["paths"]["models_dir"]) / "classifier.joblib"
         original = path.read_bytes()

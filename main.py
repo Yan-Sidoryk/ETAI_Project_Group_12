@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import time
+import warnings
 from datetime import datetime
 
 import joblib
@@ -23,6 +24,7 @@ from sklearn.metrics import f1_score
 
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
+from src.explain import global_importance, model_inputs, shap_values, top_factors
 from src.evaluate import (best_threshold, cross_validate_pipeline, cv_report, score_model, split_holdout,
                           TimeCalendarSplit, corrected_paired_ttest, fold_f1_at, validation_predictions)
 from src.features import prepare, split_features_target
@@ -280,6 +282,41 @@ def predict(args):
 
 
 # Route 4: prediction for one purchase
+def explain(args):
+    """Global SHAP explanation of one saved model on the test purchases: ranked CSV and beeswarm plot."""
+    import matplotlib
+    matplotlib.use("Agg")  # write files only, never open a window
+    import matplotlib.pyplot as plt
+    import shap
+
+    config = load_config()
+    task = args.task
+    model = load_model(config, task)
+    test, clients = load_data(config, "test")
+    X = model_inputs(model, test, clients, task)
+    print(f"Explaining the saved {task} model on {len(X)} test purchases...")
+    raw, base, selected = shap_values(model, X, task)
+    table = global_importance(raw, selected)
+
+    outputs = config["paths"]["outputs_dir"]
+    os.makedirs(outputs, exist_ok=True)
+    csv_path = os.path.join(outputs, f"shap_{task}_global.csv")
+    table.to_csv(csv_path)
+    numeric = selected[raw.columns].apply(pd.to_numeric, errors="coerce")  # categoricals: no colour scale
+    with warnings.catch_warnings():  # categorical columns are all-NaN here, which numpy warns about
+        warnings.simplefilter("ignore", RuntimeWarning)
+        shap.summary_plot(raw.to_numpy(), numeric, feature_names=list(raw.columns), max_display=15, show=False)
+    unit = "probability of returning" if task == "classification" else "spend in EUR"
+    plt.title(f"SHAP values, {task} ({unit}); average prediction {base:,.3g}")
+    plot_path = os.path.join(outputs, f"shap_{task}_beeswarm.png")
+    plt.savefig(plot_path, dpi=120, bbox_inches="tight")
+    plt.close()
+
+    print(f"\nMean |SHAP| per feature (effect on the {unit}); direction: + means a higher value raises it\n")
+    print(table.head(15).to_string(float_format=lambda v: f"{v:.4g}"))
+    print(f"\nSaved: {csv_path}\nSaved: {plot_path}")
+
+
 def client(args):
     """Read one purchase from JSON, predict with saved models, and print the result."""
     config = load_config()
@@ -315,6 +352,20 @@ def client(args):
     print(f"Decision: {'returns' if decision[0] else 'does not return'} ({decision[0]})")
     print(f"Expected spend in the next 90 days: {spend:,.2f} EUR")
 
+    # Why: the features that moved this purchase's predictions most, from the average prediction (SHAP).
+    explained = [("classification", classifier, "probability", lambda v: f"{v * 100:+.1f} pp")]
+    if decision[0] == 1:
+        explained.append(("regression", regressor, "spend", lambda v: f"{v:+,.0f} EUR"))
+    for task, model, label, fmt in explained:
+        X = model_inputs(model, purchase, clients, task)
+        raw, base, selected = shap_values(model, X, task)
+        start = f"{base:.1%}" if task == "classification" else f"{base:,.0f} EUR"
+        print(f"\nWhy this {label} (average {start}; main contributions):")
+        for name, value, contribution in top_factors(raw.iloc[0], selected.iloc[0]):
+            shown = ("missing" if pd.isna(value) else value if not isinstance(value, float)
+                     else f"{value:,.0f}" if abs(value) >= 100 else f"{value:.3g}")
+            print(f"  {name} = {shown}: {fmt(contribution)}")
+
 
 def main():
     """Parse the command line and run the chosen route."""
@@ -346,6 +397,10 @@ def main():
 
     p = commands.add_parser("predict", help="predict test.csv with the saved models")
     p.set_defaults(run=predict)
+
+    p = commands.add_parser("explain", help="global SHAP explanation of a saved model on test.csv")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.set_defaults(run=explain)
 
     p = commands.add_parser("client", help="predict one new purchase")
     p.add_argument("--input", required=True, help="JSON file with one purchase")
