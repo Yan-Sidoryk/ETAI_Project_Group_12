@@ -13,6 +13,7 @@ src/
   data.py           load config.yaml + diagnosis.yaml, read the CSVs
   cleaning.py       rule checks and repairs from diagnosis.yaml; training-only empty-row removal
   features.py       prepare(): clean, join clientes.csv, add_features(); split X and y
+  selection.py      per-fold feature selection, the first pipeline step (permutation importance + correlation)
   preprocessing.py  imputation, scaling, one-hot encoding (fitted inside the model pipeline)
   model.py          model registry per task, baseline ("floor") models, build_pipeline()
   evaluate.py       time-ordered hold-out and CV folds with a calendar gap, metrics, CV reports
@@ -22,7 +23,7 @@ tests/          integration tests for the four commands
 examples/       client inputs: returning_customer.json, new_customer.json
 data/           raw input CSVs (train, test, clientes, sample_submission)
 docs/           project brief (PDF + guidelines.md) and column descriptions
-notebooks/      data audit (exploration and cleaning rationale)
+notebooks/      01 data audit (exploration and cleaning rationale), 02 feature selection (method walkthrough)
 models/         saved models (generated, git-ignored)
 outputs/        submissions, predictions, run reports (generated, git-ignored)
 ```
@@ -110,7 +111,7 @@ raw rows ──> clean (diagnosis.yaml) ──> join clientes.csv ──> add_fe
 ```
 
 - `prepare()` learns nothing from the data, so a test purchase uses only itself, the training data and `clientes.csv`
-  (brief rule 1). Everything learned (imputation, encoding, scaling, later feature selection) sits inside the
+  (brief rule 1). Everything learned (feature selection, imputation, encoding, scaling) sits inside the
   scikit-learn `Pipeline`, so it is refitted in every CV fold and saved with the model.
 - **Hold-out:** the most recent 20% of training rows (from 17 Jun 2023), never used for a choice. Development rows
   end `validation.gap_days` (90) days before it, because a purchase's label looks 90 days ahead.
@@ -122,6 +123,11 @@ raw rows ──> clean (diagnosis.yaml) ──> join clientes.csv ──> add_fe
   missing spend is not zero). Log target is off (`log_target: false`): on the tree models it lowers MAE but raises RMSE.
 - **Coherence:** spend is predicted only where the classifier says "returns"; the regression file holds exactly
   those IDs and the client shows 0 EUR otherwise.
+- **Feature selection** is the first pipeline step (`src/selection.py`), fitted on each fold's training rows only and
+  separately per task, so validation rows never influence which features are used. Fitted steps are cached in
+  `outputs/cache` (the folds are fixed): a fold's selection is computed once, then reused by every model, rerun and
+  tuning trial. **Delete `outputs/cache` after editing `src/selection.py` or `src/preprocessing.py`**, because the cache
+  does not see code changes.
 - **Not used as features:** IDs, `purchase_date` (splitting only), both targets, and the
   `clientes.csv` columns other than `country_or_region`, `commercial_region` and `customer_since_year`
   (mostly missing or almost unique per customer).
@@ -140,19 +146,33 @@ Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), t
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
 The table above predates them and needs a `train` rerun.
 
-Feature selection (19 Nov 2026): a `select` step between `prep` and `model` (`feature_selection` in `config.yaml`),
-on the one-hot columns, refitted in every fold. `random_noise` is a candidate again and must be dropped.
-- `method: model` (random-forest impurity importance, median cut) keeps `random_noise` (rank 21 of 131): impurity favours
-  continuous columns. Rejected.
-- `method: permutation` (default): permutation importance > 0 on 25% of the training fold held out of the forest.
-  Drops `random_noise` in both tasks. On the dev rows it keeps 79 of 131 columns (classification) and 72 of 113
-  (regression); it drops `count_trend_90d`, `value_vs_usual`, `shipping_rate` (classification) and `overdue_ratio`,
-  `value_vs_usual` (regression).
+Feature selection (25 Nov 2026), per fold and per task (`feature_selection` in `config.yaml`). Choosing a drop list
+on the development rows (notebook 02, 24 Nov) was leakage, because CV then validated on rows that helped choose the
+features. The notebook now only walks through the method. Inside each fold's training rows:
+- each raw column is ranked by permutation importance through a probe (preprocessing plus a random forest, 5 inner
+  folds × 2 shuffles), so a categorical is judged as a whole and after preprocessing;
+- a column is dropped when its importance is not above max(`random_noise`, 0), or when it is a weaker member of a
+  numeric family with Spearman |r| >= 0.9.
 
-CV with the new features and permutation selection: classification F1 random forest 0.746, XGBoost 0.730, CatBoost 0.727,
-logistic regression 0.725, LightGBM 0.720, hist gradient boosting 0.716, floor 0.712. Regression RMSE random forest 1,964,
-LightGBM 1,999, XGBoost 2,015, CatBoost 2,027, hist gradient boosting 2,052, ridge 2,187, floor 2,472.
-Random forest leads both tasks; config still saves XGBoost / CatBoost. Selection makes `compare` about 10x slower.
+Classification keeps 23-31 of 49 features per fold (11 in every fold), and regression keeps 19-27 (5 in every fold).
+`random_noise` is dropped in every fold of both tasks. First `train` run: about 4 min; repeated run: 46 s (cache).
+
+CV with per-fold selection (`compare`), against all candidate features without selection:
+
+| Classification (F1) | Selected | All | Regression (RMSE, EUR) | Selected | All |
+|---|---|---|---|---|---|
+| random forest | **0.748** | 0.744 | random forest | **1,976** | 1,967 |
+| XGBoost | 0.733 | 0.729 | XGBoost | 2,005 | 1,993 |
+| CatBoost | 0.729 | 0.727 | ridge | 2,006 | 2,216 |
+| hist gradient boosting | 0.726 | 0.721 | LightGBM | 2,008 | 2,008 |
+| LightGBM | 0.725 | 0.723 | CatBoost | 2,018 | 2,001 |
+| logistic regression | 0.722 | 0.712 | hist gradient boosting | 2,054 | 2,049 |
+| floor | 0.712 | 0.712 | floor | 2,472 | 2,472 |
+
+Selection helps every classifier slightly, and helps the linear models most (ridge 2,216 → 2,006). For the regression
+tree models it is neutral or slightly worse, always within one fold std. Hold-out of the saved models: XGBoost F1 0.771
+(floor 0.753), CatBoost RMSE 2,430 (floor 3,289), R² 0.45. Random forest leads both tasks on CV; the config still saves
+XGBoost and CatBoost.
 
 ### Next steps
 
@@ -161,9 +181,9 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 1. **Threshold tuning** on out-of-fold probabilities; an early check (logistic regression, before the
    90-day gap) gave CV F1 0.742 at threshold 0.35 against 0.714 at 0.5 [classification metrics 0.5].
 2. **Hyperparameter tuning** with Optuna, scored by the same gapped CV [tuning 0.75 + regression 1.5].
-3. **Feature engineering** in `add_features()`: first set done (see status); gains are within one CV std, so
-   check them with feature selection [preprocessing and FE 1 + regression 1.5].
-4. **Feature selection:** done (see status). Left: a per-feature permutation table for the report
+3. **Feature engineering** in `add_features()`: first set done; selection keeps most of them in some folds
+   [preprocessing and FE 1 + regression 1.5].
+4. **Feature selection:** done, per fold in the pipeline; notebook 02 explains the method (see status)
    [feature selection 0.75].
 5. **Preprocessing comparison:** encoders, scalers, imputers [preprocessing and FE].
 6. **Statistical model comparison** (corrected paired t-test on the same folds) [model assessment].

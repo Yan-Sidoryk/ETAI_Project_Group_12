@@ -36,7 +36,7 @@ class PipelineRoutesTest(unittest.TestCase):
             "scoreboard": str(Path(cls.directory.name) / "outputs/runs.csv"),
         }
         cls.config["validation"]["n_splits"] = 2
-        cls.config["feature_selection"].update(n_repeats=1, params={"n_estimators": 3, "min_samples_leaf": 5})
+        cls.config["feature_selection"].update(n_splits=2, n_repeats=1, params={"n_estimators": 3, "min_samples_leaf": 5})
         # Small stand-in models; select them explicitly so the tests do not depend on config.yaml's choice.
         cls.config["classification"]["model"] = "random_forest"
         cls.config["regression"]["model"] = "catboost"
@@ -67,6 +67,10 @@ class PipelineRoutesTest(unittest.TestCase):
             model = load_model(self.config, task)
             self.assertEqual(model["features"], list(model["pipeline"].feature_names_in_))
             self.assertTrue(set(self.config["targets"].values()).isdisjoint(model["features"]))
+            # random_noise is a candidate but the reference for "no signal", so selection must drop it
+            selected = model["pipeline"].named_steps["select"].selected_
+            self.assertIn("random_noise", model["features"])
+            self.assertNotIn("random_noise", selected)
 
     def test_comparison_reports_candidates_and_does_not_overwrite_models(self):
         for task, filename in (("classification", "classifier.joblib"), ("regression", "regressor.joblib")):

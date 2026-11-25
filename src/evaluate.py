@@ -93,7 +93,8 @@ def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) ->
     """
     Fits a fresh copy of `pipeline` (preprocessing included) on each fold's training rows and
     scores it on that fold's validation rows. One row per fold: every metric on the validation
-    rows, plus the train score and train-validation gap of `selection_metric`.
+    rows, plus the train score and train-validation gap of `selection_metric`, and the kept features
+    when the pipeline selects them.
     """
     selection_metric = task_config["selection_metric"]
     rows = []
@@ -104,6 +105,8 @@ def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) ->
         rows.append({"fold": fold, "train_rows": len(train_idx), "train": train,
                      "validation": validation[selection_metric],
                      "gap": train - validation[selection_metric], **validation})
+        if "select" in model.named_steps:  # the features this fold's selection kept
+            rows[-1]["kept"] = model.named_steps["select"].selected_
     return pd.DataFrame(rows)
 
 
@@ -112,7 +115,7 @@ def cv_report(fold_scores: pd.DataFrame, metrics: list, selection_metric: str, t
     return "\n".join([
         f"{title} ({len(fold_scores)} time-ordered folds, selection metric: {selection_metric})",
         "",
-        fold_scores.to_string(index=False, float_format=lambda v: f"{v:.3f}"),
+        fold_scores.drop(columns="kept", errors="ignore").to_string(index=False, float_format=lambda v: f"{v:.3f}"),
         "",
         fold_scores[metrics].agg(["mean", "std"]).T.to_string(float_format=lambda v: f"{v:.3f}"),
         f"\n{selection_metric}: train-validation gap mean = {fold_scores['gap'].mean():+.3f}",
