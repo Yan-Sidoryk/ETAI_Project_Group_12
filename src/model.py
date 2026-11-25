@@ -77,7 +77,8 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
     selector = FeatureSelector(
         task, config["preprocessing"], forest_params=selection.get("params"), n_splits=selection["n_splits"],
         n_repeats=selection["n_repeats"], corr_threshold=selection["corr_threshold"],
-        reference=selection["reference"], random_state=config["seed"])
+        reference=selection["reference"], min_importance=selection["min_importance"][task],
+        random_state=config["seed"])
     # Fitted steps are cached on disk, keyed by their settings and input rows. The folds are fixed, so each fold's
     # selection is computed once and reused by every model, every `compare`/`train` run and every tuning trial.
     # ponytail: the key ignores code; delete outputs/cache after editing src/selection.py or src/preprocessing.py

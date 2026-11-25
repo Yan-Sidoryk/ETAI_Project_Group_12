@@ -28,17 +28,18 @@ class FeatureSelector(TransformerMixin, BaseEstimator):
          random forest) is fitted on the other parts, and each raw column of the held-out part is shuffled
          `n_repeats` times. Importance = mean drop in score (ROC-AUC, or RMSE in EUR). A categorical column is
          shuffled as a whole, and every column is judged after preprocessing (imputation, missing flags, encoding).
-      2. no signal: dropped when importance <= max(importance of `reference`, 0). `reference` (random_noise) is a
-         known-useless column, so a kept feature must beat pure noise and "no effect".
+      2. no signal: dropped when importance <= max(importance of `reference`, `min_importance`). `reference`
+         (random_noise) is a known-useless column, and `min_importance` is the smallest score drop worth keeping
+         (in ROC-AUC, or EUR of RMSE), so a kept feature must beat pure noise and a minimum real effect.
       3. duplicates: numeric columns with Spearman |r| >= `corr_threshold` form a family (complete linkage);
          only the most important member is kept.
     """
 
     def __init__(self, task, preprocessing, forest_params=None, n_splits=5, n_repeats=2,
-                 corr_threshold=0.9, reference="random_noise", random_state=None):
+                 corr_threshold=0.9, reference="random_noise", min_importance=0.0, random_state=None):
         self.task, self.preprocessing, self.forest_params = task, preprocessing, forest_params
         self.n_splits, self.n_repeats, self.corr_threshold = n_splits, n_repeats, corr_threshold
-        self.reference, self.random_state = reference, random_state
+        self.reference, self.min_importance, self.random_state = reference, min_importance, random_state
 
     def fit(self, X: pd.DataFrame, y):
         forest, scoring = _PROBE[self.task]
@@ -54,7 +55,8 @@ class FeatureSelector(TransformerMixin, BaseEstimator):
         drops = np.hstack(drops)
         table = pd.DataFrame({"importance": drops.mean(axis=1), "std": drops.std(axis=1)}, index=X.columns)
 
-        cutoff = max(table.loc[self.reference, "importance"], 0) if self.reference in table.index else 0
+        noise = table.loc[self.reference, "importance"] if self.reference in table.index else -np.inf
+        cutoff = max(noise, self.min_importance)
         table["kept"] = table["importance"] > cutoff
         table["reason"] = np.where(table["kept"], "", f"no signal (not above {cutoff:.4g})")
         if not table["kept"].any():  # never return an empty feature set

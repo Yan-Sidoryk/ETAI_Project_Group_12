@@ -151,8 +151,10 @@ on the development rows (notebook 02, 24 Nov) was leakage, because CV then valid
 features. The notebook now only walks through the method. Inside each fold's training rows:
 - each raw column is ranked by permutation importance through a probe (preprocessing plus a random forest, 5 inner
   folds × 2 shuffles), so a categorical is judged as a whole and after preprocessing;
-- a column is dropped when its importance is not above max(`random_noise`, 0), or when it is a weaker member of a
+- a column is dropped when its importance is not above max(`random_noise`, `min_importance`), or when it is a weaker member of a
   numeric family with Spearman |r| >= 0.9.
+- `min_importance` is set per task in `config.yaml` (ROC-AUC for classification, EUR of RMSE for regression). Both are 0
+  for now, so a feature with a tiny positive importance passes whenever `random_noise` scores below 0.
 
 Classification keeps 23-31 of 49 features per fold (11 in every fold), and regression keeps 19-27 (5 in every fold).
 `random_noise` is dropped in every fold of both tasks. First `train` run: about 4 min; repeated run: 46 s (cache).
