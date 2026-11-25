@@ -272,7 +272,7 @@ XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibil
 
 | Task | Model | CV (5 folds) | Floor | Hold-out |
 |---|---|---|---|---|
-| Classification (F1) | random forest | 0.742 ± 0.018 | 0.712 | 0.771 (floor 0.753), ROC-AUC 0.808 |
+| Classification (F1) | random forest, threshold 0.41 | 0.752 ± 0.017 | 0.712 | 0.791 (floor 0.753), ROC-AUC 0.808 |
 | Regression (RMSE, EUR) | LightGBM (tuned) | 1,955 ± 178 | 2,472 | 2,528 (floor 3,289), MAE 1,273, R² 0.40 |
 
 Preprocessing (25 Nov 2026): `robust` scaler, `median` imputer, `constant` for missing categories; encoder `ordinal`
@@ -281,7 +281,7 @@ grid (`experiment`, random forest, same per-fold selection for every candidate) 
 within 0.007 F1 of each other (noise), while for regression one-hot beat ordinal in every fold, by 43 EUR on average.
 With one-hot everywhere, classification CV was 0.748: also within noise of 0.742.
 
-Threshold (25 Nov 2026, measured, not yet applied; `classification.threshold` is still 0.5). `compare` now reports
+Threshold (25 Nov 2026; `classification.threshold` set to 0.41 for the saved random forest, final value in step 5). `compare` now reports
 each model's best threshold on the pooled validation rows and F1 there; `train` adds the best threshold per fold and
 the hold-out F1 at the CV-chosen threshold. Every model's best threshold is below 0.5 (0.31-0.41). Random forest:
 per fold 0.38, 0.42, 0.37, 0.42, 0.43 (stable over time), CV F1 0.752 at 0.41 vs 0.742 at 0.5 (slightly optimistic:

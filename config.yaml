@@ -86,7 +86,7 @@ preprocessing_experiment:
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
-  threshold: 0.5        # probability from which a customer is predicted to return
+  threshold: 0.41       # probability from which a customer is predicted to return; best on CV for random_forest (25 Nov)
   model: random_forest  # the one that `train` saves; must be a name in models
   models:               # every model that `compare` cross-validates, with its params
     logistic_regression: { params: { max_iter: 2000 } }
