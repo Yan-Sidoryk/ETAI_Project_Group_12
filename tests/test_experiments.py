@@ -72,6 +72,11 @@ class PreprocessingExperimentsTest(unittest.TestCase):
             self.assertIsInstance(categorical.named_steps["encode"], encoder)
             self.assertEqual(pipeline.named_steps["select"].preprocessing["encoder"], name)
         self.assertEqual(preprocessing_candidates(self.config, "regression")[0]["encoder"], "onehot")
+        # A model entry's own preprocessing changes its "prep" step only, never the shared selection
+        pipeline = build_pipeline("classification", self.config,
+                                  {"type": "mlp", "preprocessing": {"encoder": "onehot"}})
+        self.assertIsInstance(pipeline.named_steps["prep"].transformers[0][1].named_steps["encode"], OneHotEncoder)
+        self.assertEqual(pipeline.named_steps["select"].preprocessing["encoder"], "ordinal")
 
     def test_feature_selection_is_shared_by_every_candidate(self):
         self.config["classification"]["model"] = "random_forest"

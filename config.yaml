@@ -126,6 +126,16 @@ classification:
       }
     # Soft voting: the average of the members' predicted probabilities (each member is its own entry above)
     soft_voting: { type: voting, params: { members: [random_forest, xgboost_tuned] } }
+    # Neural network (multilayer perceptron), with its own preprocessing: one-hot (ordinal codes would be read as
+    # quantities). Early stopping holds out 10% of each fold's training rows. mlp_quantile maps every numeric column
+    # to a normal shape first, because robust scaling leaves the heavy-tailed EUR columns with extreme values.
+    mlp:
+      { preprocessing: { encoder: onehot },
+        params: { hidden_layer_sizes: [64, 32], alpha: 0.001, early_stopping: true, max_iter: 500 } }
+    mlp_quantile:
+      { type: mlp,
+        preprocessing: { encoder: onehot, scaler: { type: quantile, params: { output_distribution: normal } } },
+        params: { hidden_layer_sizes: [64, 32], alpha: 0.001, early_stopping: true, max_iter: 500 } }
 
 regression:
   # Overrides the shared `preprocessing` for this task only. The 25 Nov grid (random forest): one-hot beat

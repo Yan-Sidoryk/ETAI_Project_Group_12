@@ -12,6 +12,7 @@ from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (HistGradientBoostingClassifier, HistGradientBoostingRegressor,
                               RandomForestClassifier, RandomForestRegressor, VotingClassifier)
 from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -27,6 +28,7 @@ _MODELS = {
         "xgboost": XGBClassifier,
         "lightgbm": LGBMClassifier,
         "catboost": CatBoostClassifier,
+        "mlp": MLPClassifier,
     },
     "regression": {
         "dummy": DummyRegressor,
@@ -92,8 +94,10 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
     model_type = model_config["type"]
     model = build_estimator(task, config, model_config)
 
+    # A model entry may override preprocessing for its own "prep" step (e.g. one-hot for a neural network).
+    # Feature selection keeps the task's settings, so every model shares each fold's cached selection.
     preprocessing = task_preprocessing(config, task)
-    preprocessor = build_preprocessor(preprocessing)
+    preprocessor = build_preprocessor({**preprocessing, **(model_config.get("preprocessing") or {})})
     selection = config.get("feature_selection") or {}
     if selection.get("method", "none") == "none" or model_type == "dummy":
         return Pipeline([("prep", preprocessor), ("model", model)])

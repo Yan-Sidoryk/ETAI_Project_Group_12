@@ -249,6 +249,19 @@ with `compare` (best of 40 trials is slightly optimistic):
   not significantly different (p 0.69). Regression saves `lightgbm_tuned`, chosen on CV (its hold-out is mixed
   against random forest: RMSE 2,528 vs 2,501, MAE 1,273 vs 1,298).
 
+**Neural network** (25 Nov 2026): a multilayer perceptron (scikit-learn `MLPClassifier`, layers 64-32, early
+stopping on 10% of each fold's training rows) in `compare`, as `mlp` and `mlp_quantile`. A model entry may set its own
+`preprocessing` for its "prep" step: both use one-hot encoding (ordinal codes would be read as quantities), and
+`mlp_quantile` also maps the numeric columns to a normal shape, since robust scaling leaves the heavy-tailed EUR
+columns extreme. Feature selection keeps the task's settings, so it is the same as for every other model.
+- F1 at best threshold 0.737 and 0.735 (ROC-AUC 0.764 and 0.758), against 0.752 (0.785) for random forest: level with
+  logistic regression, below the tree models, not significantly (p 0.18 and 0.15).
+- Train-validation gap 0.03 (random forest 0.14): the network does not overfit, it misses structure. The threshold-like
+  effects that trees split on (overdue against the usual gap, purchases in the last 90 days) are hard for it to learn
+  from about 5,000 rows. Quantile scaling changed nothing, so input scale is not the cause.
+- As expected for small tabular data, the neural network is not used. It was not tuned: tuning it or moving it to
+  PyTorch/Keras would have to close a 0.015 gap to matter.
+
 **Regression target and loss** (25 Nov 2026). Spend is right-skewed (median 959 vs mean 1,838 EUR) and higher in the
 hold-out (mean 2,206). A few large spenders dominate RMSE: the top 1% of rows carry 26% of the squared deviation in
 the development rows and 40% (7 rows, up to 25,654 EUR) in the hold-out, which is why hold-out RMSE (~2,500) is far
