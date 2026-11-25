@@ -2,6 +2,8 @@
 Build preprocessing and the configured estimator together in one pipeline.
 A new algorithm is one entry in the registry below.
 """
+import os
+
 import numpy as np
 from catboost import CatBoostClassifier, CatBoostRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
@@ -14,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier, XGBRegressor
 
 from src.preprocessing import build_preprocessor
+from src.selection import FeatureSelector
 
 _MODELS = {
     "classification": {
@@ -51,7 +54,7 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
     `model_config` contains "type", optional "params", and optional "log_target".
     Each fold fits its own preprocessing. The seed is used unless params already
     specify random_state. A log-target regressor converts predictions back to EUR.
-    Step names remain "prep" and "model" for hyperparameter configuration.
+    Steps: "select" (per-fold feature selection, when feature_selection.method is "permutation"), "prep", "model".
     """
     registry = _MODELS[task]
     model_type = model_config["type"]
@@ -68,4 +71,16 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
         model = TransformedTargetRegressor(regressor=model, func=np.log1p, inverse_func=np.expm1)
 
     preprocessor = build_preprocessor(config["preprocessing"])
-    return Pipeline([("prep", preprocessor), ("model", model)])
+    selection = config.get("feature_selection") or {}
+    if selection.get("method", "none") == "none" or model_type == "dummy":
+        return Pipeline([("prep", preprocessor), ("model", model)])
+    selector = FeatureSelector(
+        task, config["preprocessing"], forest_params=selection.get("params"), n_splits=selection["n_splits"],
+        n_repeats=selection["n_repeats"], corr_threshold=selection["corr_threshold"],
+        reference=selection["reference"], min_importance=selection["min_importance"][task],
+        random_state=config["seed"])
+    # Fitted steps are cached on disk, keyed by their settings and input rows. The folds are fixed, so each fold's
+    # selection is computed once and reused by every model, every `compare`/`train` run and every tuning trial.
+    # ponytail: the key ignores code; delete outputs/cache after editing src/selection.py or src/preprocessing.py
+    return Pipeline([("select", selector), ("prep", preprocessor), ("model", model)],
+                    memory=os.path.join(config["paths"]["outputs_dir"], "cache"))

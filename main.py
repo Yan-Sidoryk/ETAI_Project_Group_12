@@ -27,7 +27,7 @@ from src.features import prepare, split_features_target
 from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
 from src.model import FLOOR, build_pipeline
-from src.results import save_run, save_scores
+from src.results import save_run, save_scores, selection_report
 
 
 # Shared by compare and train, so both always judge models on the same rows and folds
@@ -185,8 +185,11 @@ def train(args):
         cv_report(fold_scores, metrics, selection_metric, "Cross-validation"),
         summary,
         f"Final model: refit on all {len(X_all)} training rows, saved to {model_path}",
+        selection_report(fold_scores, pipeline),
     ])
     report_path = save_run(config["paths"]["outputs_dir"], run, report)
+    if "select" in pipeline.named_steps:
+        print("\n" + selection_report(fold_scores, pipeline).split("\n\n")[0])
     print(f"\nSaved model: {model_path}  (refit on all {len(X_all)} training rows)")
     print(f"Full report: {report_path}")
 

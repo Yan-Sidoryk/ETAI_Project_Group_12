@@ -17,9 +17,9 @@ id_cols:
   - customer_id
 
 # Columns never used as model inputs (purchase_date is used only to order the splits).
+# Everything else is a candidate; feature_selection below decides, inside each fold.
 drop_columns:
   - purchase_date
-  - random_noise
 
 # Columns taken from clientes.csv (joined on customer_id).
 client_columns:
@@ -55,6 +55,23 @@ preprocessing:
     - country_or_region
     - commercial_region
 
+# Feature selection: the first pipeline step, fitted on each fold's training rows only (src/selection.py).
+# method: permutation | none. Raw columns are ranked by permutation importance through a probe (preprocessing +
+# random forest with `params`) over `n_splits` inner folds x `n_repeats` shuffles. Dropped: importance not above
+# max(`reference`, `min_importance`), or a weaker member of a numeric family with Spearman |r| >= corr_threshold.
+# random_noise must stay a candidate (not in drop_columns): it is the reference.
+# Cached in outputs/cache; delete that folder after editing src/selection.py or src/preprocessing.py.
+feature_selection:
+  method: permutation
+  n_splits: 5
+  n_repeats: 2
+  corr_threshold: 0.9
+  reference: random_noise
+  min_importance:         # smallest score drop a feature must cause when shuffled; raise it to keep fewer features
+    classification: 0     # in ROC-AUC (useful features: about 0.001-0.007), e.g. 0.0005
+    regression: 5         # in EUR of RMSE (useful features: about 1-300), e.g. 5
+  params: { n_estimators: 100, min_samples_leaf: 5, n_jobs: -1 }
+
 preprocessing_experiment:
   # Grid search: test all combinations of the candidate lists below.
   # The current preprocessing is always included as a reference.
@@ -66,12 +83,12 @@ preprocessing_experiment:
   # Candidates may also use {type: name, params: {...}}, just like preprocessing.
   # 24 combinations x 5 folds = 120 fits per model. Extend these lists as needed.
 
-classification:
+  classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
-  selection_metric: f1 # the Kaggle metric; must be one of metrics
-  threshold: 0.5 # probability from which a customer is predicted to return
-  model: random_forest # the one that `train` saves; must be a name in models
-  models: # every model that `compare` cross-validates, with its params
+  selection_metric: f1  # the Kaggle metric; must be one of metrics
+  threshold: 0.5        # probability from which a customer is predicted to return
+  model: random_forest  # the one that `train` saves; must be a name in models
+  models:               # every model that `compare` cross-validates, with its params
     logistic_regression: { params: { max_iter: 2000 } }
     random_forest: { params: { n_estimators: 300, min_samples_leaf: 5 } }
     hist_gradient_boosting: { params: { learning_rate: 0.05, max_iter: 200 } }
@@ -100,9 +117,9 @@ classification:
       }
 
 regression:
-  metrics: [rmse, mae, r2] # measured in EUR, on customers who really returned
-  selection_metric: rmse # lower is better; must be one of metrics
-  model: catboost # the one that `train` saves; must be a name in models
+  metrics: [rmse, mae, r2]    # measured in EUR, on customers who really returned
+  selection_metric: rmse      # lower is better; must be one of metrics
+  model: random_forest        # the one that `train` saves; must be a name in models
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.

@@ -3,7 +3,10 @@ The learned preprocessing: imputation, scaling and encoding. It is the first ste
 Pipeline, so it is fitted on training rows only (again in every validation fold) and saved
 together with the model.
 """
-from sklearn.compose import ColumnTransformer
+
+import re
+
+from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (MaxAbsScaler, MinMaxScaler, Normalizer, OneHotEncoder,
@@ -87,7 +90,9 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
         ("impute", component("categorical_imputer", "constant", _CATEGORICAL_IMPUTERS)),
         ("encode", component("encoder", "onehot", encoders)),
     ])
+    # Matched by name, so a categorical column listed in drop_columns is simply absent instead of an error.
+    names = "|".join(re.escape(c) for c in preprocessing_config["categorical_features"])
     return ColumnTransformer(
-        [("categorical", categorical, preprocessing_config["categorical_features"])],
+        [("categorical", categorical, make_column_selector(pattern=f"^(?:{names})$"))],
         remainder=numeric,
     )
