@@ -48,6 +48,11 @@ FLOOR = {
 }
 
 
+def task_preprocessing(config: dict, task: str) -> dict:
+    """The task's preprocessing: the shared `preprocessing` settings, with `<task>.preprocessing` overriding them."""
+    return {**config["preprocessing"], **(config[task].get("preprocessing") or {})}
+
+
 def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
     """Build an unfitted preprocessing/model pipeline from explicit model settings.
 
@@ -70,12 +75,13 @@ def build_pipeline(task: str, config: dict, model_config: dict) -> Pipeline:
     if model_config.get("log_target"):
         model = TransformedTargetRegressor(regressor=model, func=np.log1p, inverse_func=np.expm1)
 
-    preprocessor = build_preprocessor(config["preprocessing"])
+    preprocessing = task_preprocessing(config, task)
+    preprocessor = build_preprocessor(preprocessing)
     selection = config.get("feature_selection") or {}
     if selection.get("method", "none") == "none" or model_type == "dummy":
         return Pipeline([("prep", preprocessor), ("model", model)])
     selector = FeatureSelector(
-        task, config["preprocessing"], forest_params=selection.get("params"), n_splits=selection["n_splits"],
+        task, preprocessing, forest_params=selection.get("params"), n_splits=selection["n_splits"],
         n_repeats=selection["n_repeats"], corr_threshold=selection["corr_threshold"],
         reference=selection["reference"], min_importance=selection["min_importance"][task],
         random_state=config["seed"])

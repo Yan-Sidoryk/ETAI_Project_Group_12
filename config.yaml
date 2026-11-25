@@ -36,9 +36,9 @@ validation:
 preprocessing:
   # Each choice accepts a name, or {type: name, params: {...}} for sklearn parameters.
   scaler: robust # none | standard | minmax | robust | maxabs | normalize | power | quantile
-  numeric_imputer: mean # median | mean | most_frequent | constant (0) | knn | none
+  numeric_imputer: median # median | mean | most_frequent | constant (0) | knn | none
   categorical_imputer: constant # constant ("missing") | most_frequent | none
-  encoder: ordinal # onehot | ordinal (unseen categories -> -1)
+  encoder: ordinal # onehot | ordinal (unseen categories -> -1); regression overrides it below
   # Examples (replace the corresponding choice above):
   # scaler: {type: robust, params: {quantile_range: [10, 90]}}
   # numeric_imputer: {type: knn, params: {n_neighbors: 5, add_indicator: false}}
@@ -83,7 +83,7 @@ preprocessing_experiment:
   # Candidates may also use {type: name, params: {...}}, just like preprocessing.
   # 24 combinations x 5 folds = 120 fits per model. Extend these lists as needed.
 
-  classification:
+classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
   threshold: 0.5        # probability from which a customer is predicted to return
@@ -117,6 +117,9 @@ preprocessing_experiment:
       }
 
 regression:
+  # Overrides the shared `preprocessing` for this task only. The 25 Nov grid (random forest): one-hot beat
+  # ordinal in every fold, by 43 EUR RMSE on average; for classification all settings were within noise.
+  preprocessing: { encoder: onehot }
   metrics: [rmse, mae, r2]    # measured in EUR, on customers who really returned
   selection_metric: rmse      # lower is better; must be one of metrics
   model: random_forest        # the one that `train` saves; must be a name in models
