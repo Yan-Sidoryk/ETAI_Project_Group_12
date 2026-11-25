@@ -23,6 +23,11 @@ class PreprocessingExperimentsTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.config = load_config()
         self.config["paths"]["outputs_dir"] = self.temp.name
+        # A fixed baseline and a tiny selector, so the tests do not depend on config.yaml's current choices.
+        self.config["preprocessing"].update(scaler="standard", numeric_imputer="median",
+                                            categorical_imputer="constant", encoder="onehot")
+        self.config["feature_selection"].update(n_splits=2, n_repeats=1,
+                                                params={"n_estimators": 3, "min_samples_leaf": 5})
         self.config["preprocessing_experiment"] = {
             "mode": "grid", "candidates": {"scaler": ["standard", "none"], "encoder": ["onehot", "ordinal"]}}
 

@@ -83,7 +83,7 @@ preprocessing_experiment:
   # Candidates may also use {type: name, params: {...}}, just like preprocessing.
   # 24 combinations x 5 folds = 120 fits per model. Extend these lists as needed.
 
-  classification:
+classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
   threshold: 0.5        # probability from which a customer is predicted to return
