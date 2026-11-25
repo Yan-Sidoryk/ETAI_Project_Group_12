@@ -185,6 +185,15 @@ regression:
                   colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1 },
         log_target: false,
       }
+    # Loss variants of lightgbm_tuned for the skewed spend target (25 Nov 2026):
+    #   gamma / tweedie: log-link losses for positive, right-skewed amounts that still predict the mean (what RMSE rewards)
+    #   huber: squared loss for small errors, linear for large ones (alpha = 2,500 EUR), so extreme spenders weigh less
+    #   log: lightgbm_tuned fitted on log(1 + spend), which predicts closer to the median than the mean
+    lightgbm_gamma: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: gamma }, log_target: false }
+    lightgbm_tweedie:
+      { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: tweedie, tweedie_variance_power: 1.5 }, log_target: false }
+    lightgbm_huber: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: huber, alpha: 2500 }, log_target: false }
+    lightgbm_log: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1 }, log_target: true }
 
 # Hyperparameter tuning (`python main.py tune --task <task> --model <name>`), on the development folds only.
 # Each trial cross-validates one parameter set (classification: F1 at the model's best threshold; regression: RMSE);

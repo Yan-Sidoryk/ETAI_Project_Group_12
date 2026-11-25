@@ -309,6 +309,16 @@ as `<name>_tuned` entries and were checked with `compare` (best of 40 trials is 
   RMSE is 2,528 against 2,501 for random forest, MAE 1,273 against 1,298: mixed and within noise; the choice was
   made on CV, not on the hold-out.
 
+Regression target and loss (25 Nov 2026). Spend is right-skewed (skew 2.4 development, 3.7 hold-out; median 959 vs
+mean 1,838 EUR) and rises over time (hold-out mean 2,206). A few large spenders dominate RMSE: the top 1% of rows carry
+26% of the squared deviation in the development rows and 40% (7 rows, up to 25,654 EUR, above the development maximum of
+16,248) in the hold-out, which is why hold-out RMSE (~2,500) is far above CV (~1,955). The extremes are positive and
+plausible for business customers, so they are kept. Loss variants of `lightgbm_tuned` (CV RMSE / MAE): squared error
+1,955 / 1,242 (kept); Huber 2,016 / 1,253; tweedie 2,027 / 1,232; gamma 2,050 / 1,228; log target 2,204 / 1,282.
+Every loss that downweights the extremes lowers MAE slightly and raises RMSE, because RMSE is minimised by the mean;
+outlier removal and target clipping act the same way more bluntly and were not pursued. All differences are within
+fold noise (p >= 0.07).
+
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
 The table above predates them and needs a `train` rerun.
