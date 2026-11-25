@@ -86,7 +86,7 @@ preprocessing_experiment:
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
-  threshold: 0.5        # probability from which a customer is predicted to return
+  threshold: 0.41       # probability from which a customer is predicted to return; best on CV for random_forest (25 Nov)
   model: random_forest  # the one that `train` saves; must be a name in models
   models:               # every model that `compare` cross-validates, with its params
     logistic_regression: { params: { max_iter: 2000 } }
@@ -115,6 +115,17 @@ classification:
             allow_writing_files: false,
           },
       }
+    # Best of 40 Optuna trials (25 Nov 2026), `type` reuses the algorithm under a new name
+    random_forest_tuned:
+      { type: random_forest, params: { n_estimators: 508, min_samples_leaf: 8, max_depth: 12, max_features: sqrt } }
+    xgboost_tuned:
+      {
+        type: xgboost,
+        params: { n_estimators: 565, learning_rate: 0.0107, max_depth: 2, min_child_weight: 19.94,
+                  subsample: 0.8376, colsample_bytree: 0.9821, reg_lambda: 0.01365 },
+      }
+    # Soft voting: the average of the members' predicted probabilities (each member is its own entry above)
+    soft_voting: { type: voting, params: { members: [random_forest, xgboost_tuned] } }
 
 regression:
   # Overrides the shared `preprocessing` for this task only. The 25 Nov grid (random forest): one-hot beat
@@ -122,7 +133,7 @@ regression:
   preprocessing: { encoder: onehot }
   metrics: [rmse, mae, r2]    # measured in EUR, on customers who really returned
   selection_metric: rmse      # lower is better; must be one of metrics
-  model: random_forest        # the one that `train` saves; must be a name in models
+  model: lightgbm_tuned       # the one that `train` saves; must be a name in models
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
@@ -160,6 +171,58 @@ regression:
           },
         log_target: false,
       }
+    # Best of 40 Optuna trials (25 Nov 2026), `type` reuses the algorithm under a new name
+    random_forest_tuned:
+      {
+        type: random_forest,
+        params: { n_estimators: 185, min_samples_leaf: 2, max_depth: 8, max_features: 0.3 },
+        log_target: false,
+      }
+    lightgbm_tuned:
+      {
+        type: lightgbm,
+        params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57,
+                  colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1 },
+        log_target: false,
+      }
+    # Loss variants of lightgbm_tuned for the skewed spend target (25 Nov 2026):
+    #   gamma / tweedie: log-link losses for positive, right-skewed amounts that still predict the mean (what RMSE rewards)
+    #   huber: squared loss for small errors, linear for large ones (alpha = 2,500 EUR), so extreme spenders weigh less
+    #   log: lightgbm_tuned fitted on log(1 + spend), which predicts closer to the median than the mean
+    lightgbm_gamma: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: gamma }, log_target: false }
+    lightgbm_tweedie:
+      { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: tweedie, tweedie_variance_power: 1.5 }, log_target: false }
+    lightgbm_huber: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1, objective: huber, alpha: 2500 }, log_target: false }
+    lightgbm_log: { type: lightgbm, params: { n_estimators: 350, learning_rate: 0.01721, num_leaves: 25, min_child_samples: 57, colsample_bytree: 0.4362, reg_lambda: 0.01076, verbose: -1 }, log_target: true }
+
+# Hyperparameter tuning (`python main.py tune --task <task> --model <name>`), on the development folds only.
+# Each trial cross-validates one parameter set (classification: F1 at the model's best threshold; regression: RMSE);
+# The configured params are scored first, as the score to beat; they also fill any parameter not searched.
+# Copy the best params into `models` (e.g. as `<name>_tuned` with `type: <name>`) and check them with `compare`.
+# Spec per parameter: [int|float, low, high] (add `log` for a log scale) or [choice, a, b, ...].
+tuning:
+  trials: 40
+  spaces:
+    random_forest:
+      n_estimators: [int, 100, 600]
+      min_samples_leaf: [int, 1, 30]
+      max_depth: [choice, null, 8, 12, 20]
+      max_features: [choice, sqrt, 0.3, 0.5, 0.8, 1.0]
+    xgboost:
+      n_estimators: [int, 100, 800]
+      learning_rate: [float, 0.01, 0.3, log]
+      max_depth: [int, 2, 8]
+      min_child_weight: [float, 1, 20, log]
+      subsample: [float, 0.5, 1.0]
+      colsample_bytree: [float, 0.4, 1.0]
+      reg_lambda: [float, 0.01, 10, log]
+    lightgbm:
+      n_estimators: [int, 100, 800]
+      learning_rate: [float, 0.01, 0.3, log]
+      num_leaves: [int, 4, 64]
+      min_child_samples: [int, 5, 100]
+      colsample_bytree: [float, 0.4, 1.0]
+      reg_lambda: [float, 0.01, 10, log]
 
 outputs:
   submission: outputs/submission.csv

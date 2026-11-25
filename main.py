@@ -14,20 +14,25 @@ import argparse
 import json
 import os
 import time
+import warnings
 from datetime import datetime
 
 import joblib
 import pandas as pd
 from sklearn.base import clone
+from sklearn.metrics import f1_score
 
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
-from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout, TimeCalendarSplit
+from src.explain import global_importance, model_inputs, shap_values, top_factors
+from src.evaluate import (best_threshold, cross_validate_pipeline, cv_report, score_model, split_holdout,
+                          TimeCalendarSplit, corrected_paired_ttest, fold_f1_at, validation_predictions)
 from src.features import prepare, split_features_target
 from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
 from src.model import FLOOR, build_pipeline, task_preprocessing
 from src.results import save_run, save_scores, selection_report
+from src.tuning import tune
 
 
 # Shared by compare and train, so both always judge models on the same rows and folds
@@ -77,23 +82,38 @@ def compare(args):
     candidates = {"floor": FLOOR[task]}
     for name, settings in task_config["models"].items():
         candidates[name] = {"type": name, **settings}
-    table = []
+    table, per_fold, sizes = [], {}, None
     for name, model_config in candidates.items():
         start = time.perf_counter()
         pipeline = build_pipeline(task, config, model_config)
         folds = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, task, task_config)
-        table.append({"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
-                      "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start})
+        row = {"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
+               "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start}
+        if task == "classification":  # one threshold for all folds, chosen on their pooled validation rows
+            row["best_threshold"], row["f1_at_best"] = best_threshold(*validation_predictions(folds))
+            per_fold[name] = fold_f1_at(folds, row["best_threshold"])
+        else:
+            per_fold[name] = folds["validation"].to_numpy()
+        sizes = folds["train_rows"].mean(), folds["val_rows"].mean()   # identical folds for every model
+        table.append(row)
         print(f"  {name}: {selection_metric} = {folds['validation'].mean():.3f}")
     lower_is_better = task == "regression"            # errors in EUR; classification metrics are scores
-    table = pd.DataFrame(table)
-    table = table.sort_values(selection_metric, ascending=lower_is_better)
+    # Classification is ranked by F1 at each model's own best threshold, regression by RMSE.
+    rank_by = "f1_at_best" if task == "classification" else selection_metric
+    table = pd.DataFrame(table).sort_values(rank_by, ascending=lower_is_better).reset_index(drop=True)
+    # Each model against the best one, fold by fold: difference and corrected paired t-test p-value.
+    best = table["model"].iloc[0]
+    tests = [corrected_paired_ttest(per_fold[name], per_fold[best], *sizes) for name in table["model"]]
+    table["diff_vs_best"] = [per_fold[name].mean() - per_fold[best].mean() for name in table["model"]]
+    table["p_vs_best"] = [p for _, p in tests]
 
     path = os.path.join(config["paths"]["outputs_dir"], f"comparison_{task}.csv")
     os.makedirs(config["paths"]["outputs_dir"], exist_ok=True)
     table.to_csv(path, index=False)
     print(f"\n{task}: mean over {cv.get_n_splits()} time-ordered folds of {len(dev)} development rows, best first\n")
     print(table.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print(f"\nRanked by {rank_by}. p_vs_best: corrected paired t-test (Nadeau & Bengio) against {best} on the same "
+          f"{len(per_fold[best])} folds; p < 0.05 means the difference is unlikely to be fold noise.")
     print(f"\nSaved: {path}   |   `train` saves the model named by {task}.model in config.yaml "
           f"(now: {task_config['model']})")
 
@@ -106,6 +126,28 @@ def experiment(args):
     _, table = run_preprocessing_experiment(config, args.task, X, y, cv, getattr(args, "models", None))
     if not (table["status"] == "ok").any():
         raise SystemExit("No successful preprocessing candidates; inspect the saved errors.")
+
+
+def tune_command(args):
+    """Tune one model's hyperparameters on the development folds; prints the best params to copy into config.yaml."""
+    config = load_config(getattr(args, "config", "config.yaml"))
+    task = args.task
+    model = args.model or config[task]["model"]
+    if model not in config["tuning"]["spaces"] or model not in config[task]["models"]:
+        raise SystemExit(f"No tuning space or model config for '{model}'. Spaces: {list(config['tuning']['spaces'])}")
+    trials = args.trials or config["tuning"]["trials"]
+    _, dev, _, cv = load_training_splits(config, task)
+    X_dev, y_dev = split_features_target(dev, config, task)
+    print(f"Tuning {task} / {model}: {trials} trials x {cv.get_n_splits()} folds of {len(dev)} development rows")
+    table, best_params, configured = tune(config, task, model, X_dev, y_dev, cv, trials)
+
+    print(f"\nTop 5 of {len(table)} trials:")
+    print(table.head(5).to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    score = table.columns[1]
+    print(f"\nBest trial {int(table['number'].iloc[0])}: {score} {table[score].iloc[0]:.4f}   "
+          f"configured params: {configured:.4f}   (best of {len(table)} trials is slightly optimistic)")
+    params = {**(config[task]["models"][model].get("params") or {}), **best_params}
+    print(f"Params to copy into config.yaml {task}.models.{model}.params: {params}")
 
 
 # Route 2: evaluate, refit and save one selected model
@@ -162,6 +204,20 @@ def train(args):
         f"  floor:  {selection_metric} = {holdout_floor[selection_metric]:.3f}",
         f"  {model_type}:  " + "   ".join(f"{name} = {value:.3f}" for name, value in holdout_scores.items()),
     ])
+    if task == "classification":
+        # Threshold diagnostics: the best threshold per fold (drift over time), one threshold chosen on all
+        # validation rows (slightly optimistic: picked and scored on the same rows), and how that CV choice
+        # does on the later hold-out. Reported only; the threshold used stays classification.threshold.
+        cv_threshold, cv_f1 = best_threshold(*validation_predictions(fold_scores))
+        holdout_probability = holdout_model.predict_proba(X_holdout)[:, 1]
+        holdout_f1 = f1_score(y_holdout, holdout_probability >= cv_threshold, zero_division=0)
+        summary += "\n".join([
+            f"\n\nThreshold (configured: {threshold})",
+            "  best per fold:  " + "  ".join(f"{t:.2f}" for t in fold_scores["best_threshold"])
+            + "   F1 there: " + "  ".join(f"{v:.3f}" for v in fold_scores["f1_at_best"]),
+            f"  best on all validation rows: {cv_threshold:.2f}   CV F1 {cv_f1:.3f} (vs {cv_mean:.3f} at {threshold})",
+            f"  hold-out F1 at {cv_threshold:.2f}: {holdout_f1:.3f} (vs {holdout_scores['f1']:.3f} at {threshold})",
+        ])
     print(summary)
 
     # The model that is saved learns from every training row, hold-out included.
@@ -226,6 +282,41 @@ def predict(args):
 
 
 # Route 4: prediction for one purchase
+def explain(args):
+    """Global SHAP explanation of one saved model on the test purchases: ranked CSV and beeswarm plot."""
+    import matplotlib
+    matplotlib.use("Agg")  # write files only, never open a window
+    import matplotlib.pyplot as plt
+    import shap
+
+    config = load_config()
+    task = args.task
+    model = load_model(config, task)
+    test, clients = load_data(config, "test")
+    X = model_inputs(model, test, clients, task)
+    print(f"Explaining the saved {task} model on {len(X)} test purchases...")
+    raw, base, selected = shap_values(model, X, task)
+    table = global_importance(raw, selected)
+
+    outputs = config["paths"]["outputs_dir"]
+    os.makedirs(outputs, exist_ok=True)
+    csv_path = os.path.join(outputs, f"shap_{task}_global.csv")
+    table.to_csv(csv_path)
+    numeric = selected[raw.columns].apply(pd.to_numeric, errors="coerce")  # categoricals: no colour scale
+    with warnings.catch_warnings():  # categorical columns are all-NaN here, which numpy warns about
+        warnings.simplefilter("ignore", RuntimeWarning)
+        shap.summary_plot(raw.to_numpy(), numeric, feature_names=list(raw.columns), max_display=15, show=False)
+    unit = "probability of returning" if task == "classification" else "spend in EUR"
+    plt.title(f"SHAP values, {task} ({unit}); average prediction {base:,.3g}")
+    plot_path = os.path.join(outputs, f"shap_{task}_beeswarm.png")
+    plt.savefig(plot_path, dpi=120, bbox_inches="tight")
+    plt.close()
+
+    print(f"\nMean |SHAP| per feature (effect on the {unit}); direction: + means a higher value raises it\n")
+    print(table.head(15).to_string(float_format=lambda v: f"{v:.4g}"))
+    print(f"\nSaved: {csv_path}\nSaved: {plot_path}")
+
+
 def client(args):
     """Read one purchase from JSON, predict with saved models, and print the result."""
     config = load_config()
@@ -261,6 +352,20 @@ def client(args):
     print(f"Decision: {'returns' if decision[0] else 'does not return'} ({decision[0]})")
     print(f"Expected spend in the next 90 days: {spend:,.2f} EUR")
 
+    # Why: the features that moved this purchase's predictions most, from the average prediction (SHAP).
+    explained = [("classification", classifier, "probability", lambda v: f"{v * 100:+.1f} pp")]
+    if decision[0] == 1:
+        explained.append(("regression", regressor, "spend", lambda v: f"{v:+,.0f} EUR"))
+    for task, model, label, fmt in explained:
+        X = model_inputs(model, purchase, clients, task)
+        raw, base, selected = shap_values(model, X, task)
+        start = f"{base:.1%}" if task == "classification" else f"{base:,.0f} EUR"
+        print(f"\nWhy this {label} (average {start}; main contributions):")
+        for name, value, contribution in top_factors(raw.iloc[0], selected.iloc[0]):
+            shown = ("missing" if pd.isna(value) else value if not isinstance(value, float)
+                     else f"{value:,.0f}" if abs(value) >= 100 else f"{value:.3g}")
+            print(f"  {name} = {shown}: {fmt(contribution)}")
+
 
 def main():
     """Parse the command line and run the chosen route."""
@@ -278,6 +383,13 @@ def main():
     p.add_argument("--models", nargs="+", help="configured model names; defaults to the task's selected model")
     p.set_defaults(run=experiment)
 
+    p = commands.add_parser("tune", help="tune one model's hyperparameters with Optuna on development folds")
+    p.add_argument("--config", default="config.yaml", help="YAML configuration path")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.add_argument("--model", help="configured model name; defaults to the task's selected model")
+    p.add_argument("--trials", type=int, help="number of trials; defaults to tuning.trials")
+    p.set_defaults(run=tune_command)
+
     p = commands.add_parser("train", help="train one task from the raw data and save the model")
     p.add_argument("--config", default="config.yaml", help="YAML configuration path")
     p.add_argument("--task", required=True, choices=["classification", "regression"])
@@ -285,6 +397,10 @@ def main():
 
     p = commands.add_parser("predict", help="predict test.csv with the saved models")
     p.set_defaults(run=predict)
+
+    p = commands.add_parser("explain", help="global SHAP explanation of a saved model on test.csv")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.set_defaults(run=explain)
 
     p = commands.add_parser("client", help="predict one new purchase")
     p.add_argument("--input", required=True, help="JSON file with one purchase")
