@@ -29,14 +29,23 @@ client_columns:
 
 validation:
   date_col: purchase_date
-  holdout_fraction: 0.2   # most recent rows, never used for any choice
-  n_splits: 5             # time-ordered folds on the remaining rows
-  gap_days: 90            # training rows end this many days before validation/hold-out rows start (the target's 90-day window)
+  holdout_fraction: 0.2 # most recent rows, never used for any choice
+  n_splits: 5 # time-ordered folds on the remaining rows
+  gap_days: 90 # training rows end this many days before validation/hold-out rows start (the target's 90-day window)
 
 preprocessing:
-  scaler: standard        # none | standard | minmax | robust
-  min_frequency: 20       # category levels with fewer training rows are grouped together
-  categorical_features:   # every other feature is treated as numeric
+  # Each choice accepts a name, or {type: name, params: {...}} for sklearn parameters.
+  scaler: robust # none | standard | minmax | robust | maxabs | normalize | power | quantile
+  numeric_imputer: mean # median | mean | most_frequent | constant (0) | knn | none
+  categorical_imputer: constant # constant ("missing") | most_frequent | none
+  encoder: ordinal # onehot | ordinal (unseen categories -> -1)
+  # Examples (replace the corresponding choice above):
+  # scaler: {type: robust, params: {quantile_range: [10, 90]}}
+  # numeric_imputer: {type: knn, params: {n_neighbors: 5, add_indicator: false}}
+  # categorical_imputer: {type: constant, params: {fill_value: unknown}}
+  # encoder: {type: onehot, params: {max_categories: 30}}
+  min_frequency: 20 # category levels with fewer training rows are grouped together
+  categorical_features: # every other feature is treated as numeric
     - payment_type
     - salesperson
     - commercial_zone
@@ -63,7 +72,18 @@ feature_selection:
     regression: 5         # in EUR of RMSE (useful features: about 1-300), e.g. 5
   params: { n_estimators: 100, min_samples_leaf: 5, n_jobs: -1 }
 
-classification:
+preprocessing_experiment:
+  # Grid search: test all combinations of the candidate lists below.
+  # The current preprocessing is always included as a reference.
+  candidates:
+    scaler: [none, standard, robust]
+    numeric_imputer: [median, mean]
+    categorical_imputer: [constant, most_frequent]
+    encoder: [onehot, ordinal]
+  # Candidates may also use {type: name, params: {...}}, just like preprocessing.
+  # 24 combinations x 5 folds = 120 fits per model. Extend these lists as needed.
+
+  classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
   threshold: 0.5        # probability from which a customer is predicted to return
@@ -103,7 +123,7 @@ regression:
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
-  models:                     # every model that `compare` cross-validates, with its params
+  models: # every model that `compare` cross-validates, with its params
     ridge: { params: { alpha: 1.0 }, log_target: false }
     random_forest:
       { params: { n_estimators: 300, min_samples_leaf: 5 }, log_target: false }
