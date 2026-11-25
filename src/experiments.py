@@ -102,7 +102,8 @@ def run_preprocessing_experiment(config, task, X, y, cv, models=None):
                            **{f"{key}_mean": folds[key].mean() for key in task_config["metrics"]},
                            **{f"{key}_std": folds[key].std(ddof=1) for key in task_config["metrics"]})
                 fold_rows.extend({**identifiers, **fold}
-                                 for fold in folds.to_dict("records"))
+                                 for fold in folds.drop(columns=["kept", "y_val", "probability"],
+                                                        errors="ignore").to_dict("records"))
             except Exception as exc:
                 # A valid experiment can contain unsupported combinations (e.g. NaNs with Ridge).
                 row["error"] = f"{type(exc).__name__}: {exc}"

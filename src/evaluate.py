@@ -89,12 +89,23 @@ def score_model(model, X, y, task: str, task_config: dict) -> dict:
     return {name: _METRICS[name](y, label, probability) for name in metrics}
 
 
+THRESHOLDS = np.round(np.arange(0.05, 0.951, 0.01), 2)
+
+
+def best_threshold(y, probability) -> tuple:
+    """(threshold, F1) for the threshold in THRESHOLDS that gives the highest F1 on these rows."""
+    scores = [f1_score(y, probability >= t, zero_division=0) for t in THRESHOLDS]
+    best = int(np.argmax(scores))
+    return float(THRESHOLDS[best]), float(scores[best])
+
+
 def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) -> pd.DataFrame:
     """
     Fits a fresh copy of `pipeline` (preprocessing included) on each fold's training rows and
     scores it on that fold's validation rows. One row per fold: every metric on the validation
     rows, plus the train score and train-validation gap of `selection_metric`, and the kept features
-    when the pipeline selects them.
+    when the pipeline selects them. Classification also records each fold's best threshold and F1 there,
+    and the fold's validation labels and probabilities (see validation_predictions).
     """
     selection_metric = task_config["selection_metric"]
     rows = []
@@ -107,7 +118,16 @@ def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) ->
                      "gap": train - validation[selection_metric], **validation})
         if "select" in model.named_steps:  # the features this fold's selection kept
             rows[-1]["kept"] = model.named_steps["select"].selected_
+        if task == "classification":
+            probability = model.predict_proba(X.iloc[val_idx])[:, 1]
+            rows[-1]["best_threshold"], rows[-1]["f1_at_best"] = best_threshold(y.iloc[val_idx], probability)
+            rows[-1]["y_val"], rows[-1]["probability"] = np.asarray(y.iloc[val_idx]), probability
     return pd.DataFrame(rows)
+
+
+def validation_predictions(fold_scores: pd.DataFrame) -> tuple:
+    """(labels, probabilities) of every validation row, pooled over the folds of cross_validate_pipeline."""
+    return np.concatenate(fold_scores["y_val"].to_list()), np.concatenate(fold_scores["probability"].to_list())
 
 
 def cv_report(fold_scores: pd.DataFrame, metrics: list, selection_metric: str, title: str) -> str:
@@ -115,7 +135,8 @@ def cv_report(fold_scores: pd.DataFrame, metrics: list, selection_metric: str, t
     return "\n".join([
         f"{title} ({len(fold_scores)} time-ordered folds, selection metric: {selection_metric})",
         "",
-        fold_scores.drop(columns="kept", errors="ignore").to_string(index=False, float_format=lambda v: f"{v:.3f}"),
+        fold_scores.drop(columns=["kept", "y_val", "probability"], errors="ignore")
+        .to_string(index=False, float_format=lambda v: f"{v:.3f}"),
         "",
         fold_scores[metrics].agg(["mean", "std"]).T.to_string(float_format=lambda v: f"{v:.3f}"),
         f"\n{selection_metric}: train-validation gap mean = {fold_scores['gap'].mean():+.3f}",

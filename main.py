@@ -19,10 +19,12 @@ from datetime import datetime
 import joblib
 import pandas as pd
 from sklearn.base import clone
+from sklearn.metrics import f1_score
 
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
-from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_holdout, TimeCalendarSplit
+from src.evaluate import (best_threshold, cross_validate_pipeline, cv_report, score_model, split_holdout,
+                          TimeCalendarSplit, validation_predictions)
 from src.features import prepare, split_features_target
 from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
@@ -82,8 +84,11 @@ def compare(args):
         start = time.perf_counter()
         pipeline = build_pipeline(task, config, model_config)
         folds = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, task, task_config)
-        table.append({"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
-                      "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start})
+        row = {"model": name, **folds[metrics].mean(), f"{selection_metric}_std": folds["validation"].std(ddof=1),
+               "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start}
+        if task == "classification":  # one threshold for all folds, chosen on their pooled validation rows
+            row["best_threshold"], row["f1_at_best"] = best_threshold(*validation_predictions(folds))
+        table.append(row)
         print(f"  {name}: {selection_metric} = {folds['validation'].mean():.3f}")
     lower_is_better = task == "regression"            # errors in EUR; classification metrics are scores
     table = pd.DataFrame(table)
@@ -162,6 +167,20 @@ def train(args):
         f"  floor:  {selection_metric} = {holdout_floor[selection_metric]:.3f}",
         f"  {model_type}:  " + "   ".join(f"{name} = {value:.3f}" for name, value in holdout_scores.items()),
     ])
+    if task == "classification":
+        # Threshold diagnostics: the best threshold per fold (drift over time), one threshold chosen on all
+        # validation rows (slightly optimistic: picked and scored on the same rows), and how that CV choice
+        # does on the later hold-out. Reported only; the threshold used stays classification.threshold.
+        cv_threshold, cv_f1 = best_threshold(*validation_predictions(fold_scores))
+        holdout_probability = holdout_model.predict_proba(X_holdout)[:, 1]
+        holdout_f1 = f1_score(y_holdout, holdout_probability >= cv_threshold, zero_division=0)
+        summary += "\n".join([
+            f"\n\nThreshold (configured: {threshold})",
+            "  best per fold:  " + "  ".join(f"{t:.2f}" for t in fold_scores["best_threshold"])
+            + "   F1 there: " + "  ".join(f"{v:.3f}" for v in fold_scores["f1_at_best"]),
+            f"  best on all validation rows: {cv_threshold:.2f}   CV F1 {cv_f1:.3f} (vs {cv_mean:.3f} at {threshold})",
+            f"  hold-out F1 at {cv_threshold:.2f}: {holdout_f1:.3f} (vs {holdout_scores['f1']:.3f} at {threshold})",
+        ])
     print(summary)
 
     # The model that is saved learns from every training row, hold-out included.

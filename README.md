@@ -281,6 +281,13 @@ grid (`experiment`, random forest, same per-fold selection for every candidate) 
 within 0.007 F1 of each other (noise), while for regression one-hot beat ordinal in every fold, by 43 EUR on average.
 With one-hot everywhere, classification CV was 0.748: also within noise of 0.742.
 
+Threshold (25 Nov 2026, measured, not yet applied; `classification.threshold` is still 0.5). `compare` now reports
+each model's best threshold on the pooled validation rows and F1 there; `train` adds the best threshold per fold and
+the hold-out F1 at the CV-chosen threshold. Every model's best threshold is below 0.5 (0.31-0.41). Random forest:
+per fold 0.38, 0.42, 0.37, 0.42, 0.43 (stable over time), CV F1 0.752 at 0.41 vs 0.742 at 0.5 (slightly optimistic:
+chosen and scored on the same rows), hold-out F1 0.791 at 0.41 vs 0.771 at 0.5. Boosting models gain more
+(XGBoost 0.725 -> 0.745, CatBoost 0.720 -> 0.742), so model selection should compare F1 at each model's best threshold.
+
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
 The table above predates them and needs a `train` rerun.
