@@ -4,6 +4,7 @@ is ordered by purchase date: models are always fitted on the past and scored on 
 """
 import pandas as pd
 import numpy as np
+from scipy import stats
 from sklearn.base import clone
 from sklearn.metrics import (accuracy_score, average_precision_score, balanced_accuracy_score, f1_score,
                              mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score,
@@ -113,7 +114,7 @@ def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) ->
         model = clone(pipeline).fit(X.iloc[train_idx], y.iloc[train_idx])
         validation = score_model(model, X.iloc[val_idx], y.iloc[val_idx], task, task_config)
         train = score_model(model, X.iloc[train_idx], y.iloc[train_idx], task, task_config)[selection_metric]
-        rows.append({"fold": fold, "train_rows": len(train_idx), "train": train,
+        rows.append({"fold": fold, "train_rows": len(train_idx), "val_rows": len(val_idx), "train": train,
                      "validation": validation[selection_metric],
                      "gap": train - validation[selection_metric], **validation})
         if "select" in model.named_steps:  # the features this fold's selection kept
@@ -123,6 +124,28 @@ def cross_validate_pipeline(pipeline, X, y, cv, task: str, task_config: dict) ->
             rows[-1]["best_threshold"], rows[-1]["f1_at_best"] = best_threshold(y.iloc[val_idx], probability)
             rows[-1]["y_val"], rows[-1]["probability"] = np.asarray(y.iloc[val_idx]), probability
     return pd.DataFrame(rows)
+
+
+def fold_f1_at(fold_scores: pd.DataFrame, threshold: float) -> np.ndarray:
+    """F1 of every fold's validation rows at one fixed threshold."""
+    return np.array([f1_score(y, p >= threshold, zero_division=0)
+                     for y, p in zip(fold_scores["y_val"], fold_scores["probability"])])
+
+
+def corrected_paired_ttest(a, b, train_rows: float, val_rows: float) -> tuple:
+    """
+    (t, two-sided p) for the per-fold scores `a` and `b` of two models on the same folds.
+
+    Nadeau & Bengio's correction: folds share training rows, so their differences are correlated and a plain
+    paired t-test is overconfident. The variance is inflated from 1/k to 1/k + val_rows/train_rows.
+    """
+    d = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    k = len(d)
+    variance = d.var(ddof=1) * (1 / k + val_rows / train_rows)
+    if variance == 0:
+        return (0.0, 1.0) if d.mean() == 0 else (np.inf * np.sign(d.mean()), 0.0)
+    t = d.mean() / np.sqrt(variance)
+    return float(t), float(2 * stats.t.sf(abs(t), df=k - 1))
 
 
 def validation_predictions(fold_scores: pd.DataFrame) -> tuple:

@@ -3,7 +3,26 @@ import unittest
 
 import numpy as np
 
-from src.evaluate import best_threshold
+from scipy import stats
+
+from src.evaluate import best_threshold, corrected_paired_ttest
+
+
+class CorrectedPairedTtestTest(unittest.TestCase):
+    def test_matches_nadeau_bengio_formula(self):
+        a, b = np.array([0.75, 0.76, 0.74, 0.77, 0.73]), np.array([0.73, 0.75, 0.74, 0.74, 0.72])
+        t, p = corrected_paired_ttest(a, b, train_rows=3000, val_rows=800)
+        d = a - b
+        expected_t = d.mean() / np.sqrt(d.var(ddof=1) * (1 / 5 + 800 / 3000))
+        self.assertAlmostEqual(t, expected_t)
+        self.assertAlmostEqual(p, 2 * stats.t.sf(abs(expected_t), df=4))
+        # the correction makes it more conservative than a plain paired t-test
+        self.assertGreater(p, stats.ttest_rel(a, b).pvalue)
+
+    def test_identical_and_constant_differences(self):
+        a = np.array([0.7, 0.8, 0.75])
+        self.assertEqual(corrected_paired_ttest(a, a, 100, 50), (0.0, 1.0))
+        self.assertEqual(corrected_paired_ttest(a + 0.01, a, 100, 50)[1], 0.0)
 
 
 class BestThresholdTest(unittest.TestCase):

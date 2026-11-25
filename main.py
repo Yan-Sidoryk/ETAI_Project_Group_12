@@ -24,7 +24,7 @@ from sklearn.metrics import f1_score
 from src.cleaning import drop_empty_rows
 from src.data import load_config, load_data
 from src.evaluate import (best_threshold, cross_validate_pipeline, cv_report, score_model, split_holdout,
-                          TimeCalendarSplit, validation_predictions)
+                          TimeCalendarSplit, corrected_paired_ttest, fold_f1_at, validation_predictions)
 from src.features import prepare, split_features_target
 from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
@@ -79,7 +79,7 @@ def compare(args):
     candidates = {"floor": FLOOR[task]}
     for name, settings in task_config["models"].items():
         candidates[name] = {"type": name, **settings}
-    table = []
+    table, per_fold, sizes = [], {}, None
     for name, model_config in candidates.items():
         start = time.perf_counter()
         pipeline = build_pipeline(task, config, model_config)
@@ -88,17 +88,29 @@ def compare(args):
                "train_validation_gap": folds["gap"].mean(), "seconds": time.perf_counter() - start}
         if task == "classification":  # one threshold for all folds, chosen on their pooled validation rows
             row["best_threshold"], row["f1_at_best"] = best_threshold(*validation_predictions(folds))
+            per_fold[name] = fold_f1_at(folds, row["best_threshold"])
+        else:
+            per_fold[name] = folds["validation"].to_numpy()
+        sizes = folds["train_rows"].mean(), folds["val_rows"].mean()   # identical folds for every model
         table.append(row)
         print(f"  {name}: {selection_metric} = {folds['validation'].mean():.3f}")
     lower_is_better = task == "regression"            # errors in EUR; classification metrics are scores
-    table = pd.DataFrame(table)
-    table = table.sort_values(selection_metric, ascending=lower_is_better)
+    # Classification is ranked by F1 at each model's own best threshold, regression by RMSE.
+    rank_by = "f1_at_best" if task == "classification" else selection_metric
+    table = pd.DataFrame(table).sort_values(rank_by, ascending=lower_is_better).reset_index(drop=True)
+    # Each model against the best one, fold by fold: difference and corrected paired t-test p-value.
+    best = table["model"].iloc[0]
+    tests = [corrected_paired_ttest(per_fold[name], per_fold[best], *sizes) for name in table["model"]]
+    table["diff_vs_best"] = [per_fold[name].mean() - per_fold[best].mean() for name in table["model"]]
+    table["p_vs_best"] = [p for _, p in tests]
 
     path = os.path.join(config["paths"]["outputs_dir"], f"comparison_{task}.csv")
     os.makedirs(config["paths"]["outputs_dir"], exist_ok=True)
     table.to_csv(path, index=False)
     print(f"\n{task}: mean over {cv.get_n_splits()} time-ordered folds of {len(dev)} development rows, best first\n")
     print(table.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print(f"\nRanked by {rank_by}. p_vs_best: corrected paired t-test (Nadeau & Bengio) against {best} on the same "
+          f"{len(per_fold[best])} folds; p < 0.05 means the difference is unlikely to be fold noise.")
     print(f"\nSaved: {path}   |   `train` saves the model named by {task}.model in config.yaml "
           f"(now: {task_config['model']})")
 

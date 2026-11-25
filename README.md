@@ -288,6 +288,15 @@ per fold 0.38, 0.42, 0.37, 0.42, 0.43 (stable over time), CV F1 0.752 at 0.41 vs
 chosen and scored on the same rows), hold-out F1 0.791 at 0.41 vs 0.771 at 0.5. Boosting models gain more
 (XGBoost 0.725 -> 0.745, CatBoost 0.720 -> 0.742), so model selection should compare F1 at each model's best threshold.
 
+Model selection (25 Nov 2026): `compare` ranks classification by F1 at each model's best threshold and tests every
+model against the best with the corrected paired t-test (Nadeau & Bengio) on the same 5 folds (`p_vs_best`).
+- Classification: random forest 0.752; XGBoost 0.745 (p 0.20), CatBoost 0.742 (p 0.36) and hist gradient boosting
+  (p 0.14) are not distinguishable from it; LightGBM (p 0.021), logistic regression (p 0.043) and the floor (p 0.032)
+  are significantly worse.
+- Regression: random forest 1,975; no model differs significantly (all p >= 0.18; even the floor, +497 EUR, has
+  p 0.053). With 5 folds and noisy RMSE the test has little power: "not significant" means "cannot tell apart".
+- Candidates for tuning: random forest and XGBoost (classification), random forest and LightGBM (regression).
+
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
 The table above predates them and needs a `train` rerun.
@@ -333,7 +342,7 @@ Roughly ordered by grade points per effort. The grading line from the brief is i
 4. **Feature selection:** done, per fold in the pipeline; notebook 02 explains the method (see status)
    [feature selection 0.75].
 5. **Preprocessing comparison:** encoders, scalers, imputers [preprocessing and FE].
-6. **Statistical model comparison** (corrected paired t-test on the same folds) [model assessment].
+6. **Statistical model comparison:** done, `p_vs_best` in `compare` (see status) [model assessment].
 7. **Client history lookup:** fill history fields from `train.csv` given a `customer_id` [deployment 1].
 8. **Explainability:** SHAP for both models, global and per customer, in a new `src/explain.py` [explainability 1.5].
 9. **Open-ended objective:** error analysis, stability over time or spend uncertainty [open-ended 1.5].
