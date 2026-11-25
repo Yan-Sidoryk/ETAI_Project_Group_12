@@ -132,15 +132,15 @@ raw rows ──> clean (diagnosis.yaml) ──> join clientes.csv ──> add_fe
   `clientes.csv` columns other than `country_or_region`, `commercial_region` and `customer_since_year`
   (mostly missing or almost unique per customer).
 
-### Status (17 Nov 2026)
+### Status (25 Nov 2026)
 
 Done: cleaning, features, gapped splits, 6 algorithms per task (logistic/ridge, random forest, hist gradient boosting,
 XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibility on Windows.
 
 | Task | Model | CV (5 folds) | Floor | Hold-out |
 |---|---|---|---|---|
-| Classification (F1) | XGBoost | 0.725 ± 0.023 | 0.712 | 0.771 (floor 0.753), ROC-AUC 0.809 |
-| Regression (RMSE, EUR) | CatBoost | 2,047 ± 200 | 2,472 | 2,483 (floor 3,289), MAE 1,288, R² 0.42 |
+| Classification (F1) | random forest | 0.748 ± 0.019 | 0.712 | 0.774 (floor 0.753), ROC-AUC 0.811 |
+| Regression (RMSE, EUR) | random forest | 1,974 ± 122 | 2,472 | 2,501 (floor 3,289), MAE 1,298, R² 0.41 |
 
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.
@@ -172,9 +172,8 @@ CV with per-fold selection (`compare`), against all candidate features without s
 | floor | 0.712 | 0.712 | floor | 2,472 | 2,472 |
 
 Selection helps every classifier slightly, and helps the linear models most (ridge 2,216 → 2,006). For the regression
-tree models it is neutral or slightly worse, always within one fold std. Hold-out of the saved models: XGBoost F1 0.771
-(floor 0.753), CatBoost RMSE 2,430 (floor 3,289), R² 0.45. Random forest leads both tasks on CV; the config still saves
-XGBoost and CatBoost.
+tree models it is neutral or slightly worse, always within one fold std. Random forest leads both tasks on CV and
+is the saved model since 25 Nov, with `min_importance` 0 (classification) and 5 (regression); see the status table.
 
 ### Next steps
 

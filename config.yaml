@@ -60,14 +60,14 @@ feature_selection:
   reference: random_noise
   min_importance:         # smallest score drop a feature must cause when shuffled; raise it to keep fewer features
     classification: 0     # in ROC-AUC (useful features: about 0.001-0.007), e.g. 0.0005
-    regression: 0         # in EUR of RMSE (useful features: about 1-300), e.g. 5
+    regression: 5         # in EUR of RMSE (useful features: about 1-300), e.g. 5
   params: { n_estimators: 100, min_samples_leaf: 5, n_jobs: -1 }
 
 classification:
   metrics: [f1, precision, recall, accuracy, roc_auc]
   selection_metric: f1  # the Kaggle metric; must be one of metrics
   threshold: 0.5        # probability from which a customer is predicted to return
-  model: xgboost        # the one that `train` saves; must be a name in models
+  model: random_forest  # the one that `train` saves; must be a name in models
   models:               # every model that `compare` cross-validates, with its params
     logistic_regression: { params: { max_iter: 2000 } }
     random_forest: { params: { n_estimators: 300, min_samples_leaf: 5 } }
@@ -99,7 +99,7 @@ classification:
 regression:
   metrics: [rmse, mae, r2]    # measured in EUR, on customers who really returned
   selection_metric: rmse      # lower is better; must be one of metrics
-  model: catboost             # the one that `train` saves; must be a name in models
+  model: random_forest        # the one that `train` saves; must be a name in models
   # log_target: true = fit on log(1 + spend) and convert predictions back to EUR. Off everywhere:
   # with ridge a few predictions explode once converted back; with the tree models it lowers MAE
   # (about 1,300 against 1,400 EUR) but raises RMSE, the selection metric.
