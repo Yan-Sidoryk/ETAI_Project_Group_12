@@ -30,6 +30,7 @@ from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
 from src.model import FLOOR, build_pipeline, task_preprocessing
 from src.results import save_run, save_scores, selection_report
+from src.tuning import tune
 
 
 # Shared by compare and train, so both always judge models on the same rows and folds
@@ -123,6 +124,28 @@ def experiment(args):
     _, table = run_preprocessing_experiment(config, args.task, X, y, cv, getattr(args, "models", None))
     if not (table["status"] == "ok").any():
         raise SystemExit("No successful preprocessing candidates; inspect the saved errors.")
+
+
+def tune_command(args):
+    """Tune one model's hyperparameters on the development folds; prints the best params to copy into config.yaml."""
+    config = load_config(getattr(args, "config", "config.yaml"))
+    task = args.task
+    model = args.model or config[task]["model"]
+    if model not in config["tuning"]["spaces"] or model not in config[task]["models"]:
+        raise SystemExit(f"No tuning space or model config for '{model}'. Spaces: {list(config['tuning']['spaces'])}")
+    trials = args.trials or config["tuning"]["trials"]
+    _, dev, _, cv = load_training_splits(config, task)
+    X_dev, y_dev = split_features_target(dev, config, task)
+    print(f"Tuning {task} / {model}: {trials} trials x {cv.get_n_splits()} folds of {len(dev)} development rows")
+    table, best_params, configured = tune(config, task, model, X_dev, y_dev, cv, trials)
+
+    print(f"\nTop 5 of {len(table)} trials:")
+    print(table.head(5).to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    score = table.columns[1]
+    print(f"\nBest trial {int(table['number'].iloc[0])}: {score} {table[score].iloc[0]:.4f}   "
+          f"configured params: {configured:.4f}   (best of {len(table)} trials is slightly optimistic)")
+    params = {**(config[task]["models"][model].get("params") or {}), **best_params}
+    print(f"Params to copy into config.yaml {task}.models.{model}.params: {params}")
 
 
 # Route 2: evaluate, refit and save one selected model
@@ -308,6 +331,13 @@ def main():
     p.add_argument("--config", default="config.yaml", help="YAML configuration path")
     p.add_argument("--models", nargs="+", help="configured model names; defaults to the task's selected model")
     p.set_defaults(run=experiment)
+
+    p = commands.add_parser("tune", help="tune one model's hyperparameters with Optuna on development folds")
+    p.add_argument("--config", default="config.yaml", help="YAML configuration path")
+    p.add_argument("--task", required=True, choices=["classification", "regression"])
+    p.add_argument("--model", help="configured model name; defaults to the task's selected model")
+    p.add_argument("--trials", type=int, help="number of trials; defaults to tuning.trials")
+    p.set_defaults(run=tune_command)
 
     p = commands.add_parser("train", help="train one task from the raw data and save the model")
     p.add_argument("--config", default="config.yaml", help="YAML configuration path")
