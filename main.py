@@ -26,7 +26,7 @@ from src.evaluate import cross_validate_pipeline, cv_report, score_model, split_
 from src.features import prepare, split_features_target
 from src.experiments import run_preprocessing_experiment
 from src.inference import MODEL_FILES, classify, load_model, predict_spend
-from src.model import FLOOR, build_pipeline
+from src.model import FLOOR, build_pipeline, task_preprocessing
 from src.results import save_run, save_scores, selection_report
 
 
@@ -180,7 +180,7 @@ def train(args):
     })
     report = "\n\n".join([
         f"Run: {run}\nTask: {task}\nModel: {model_type}  params={model_params}\n"
-        f"Preprocessing: {config['preprocessing']}\nThreshold: {threshold}",
+        f"Preprocessing: {task_preprocessing(config, task)}\nThreshold: {threshold}",
         cv_report(floor_scores, metrics, selection_metric, "Floor"),
         cv_report(fold_scores, metrics, selection_metric, "Cross-validation"),
         summary,

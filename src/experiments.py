@@ -10,21 +10,21 @@ import numpy as np
 import pandas as pd
 
 from src.evaluate import cross_validate_pipeline
-from src.model import build_pipeline
+from src.model import build_pipeline, task_preprocessing
 
 
 _COMPONENTS = ("scaler", "numeric_imputer", "categorical_imputer", "encoder")
 
 
-def preprocessing_candidates(config):
-    """Include the current settings and all combinations from the configured grid."""
+def preprocessing_candidates(config, task=None):
+    """Include the current settings (the task's, when `task` is given) and all combinations from the grid."""
     experiment = config.get("preprocessing_experiment", {})
     if experiment.get("mode", "grid") != "grid":
         raise ValueError("Only grid search is supported; remove preprocessing_experiment.mode")
     candidates = experiment.get("candidates", {})
     if not isinstance(candidates, dict) or set(candidates) - set(_COMPONENTS):
         raise ValueError(f"preprocessing_experiment.candidates must map these settings to lists: {_COMPONENTS}")
-    base = config["preprocessing"]
+    base = task_preprocessing(config, task) if task else config["preprocessing"]
     for key, values in candidates.items():
         if not isinstance(values, list) or not values:
             raise ValueError(f"preprocessing_experiment.candidates.{key} must be a non-empty list")
@@ -48,7 +48,7 @@ def run_preprocessing_experiment(config, task, X, y, cv, models=None):
     models = list(dict.fromkeys(models if models is not None else [task_config["model"]]))
     if not models or any(name not in task_config["models"] for name in models):
         raise ValueError(f"Choose models from {list(task_config['models'])}")
-    settings_list = preprocessing_candidates(config)
+    settings_list = preprocessing_candidates(config, task)
     metric = task_config["selection_metric"]
     if metric not in task_config["metrics"]:
         raise ValueError("selection_metric must be included in metrics")
@@ -75,6 +75,7 @@ def run_preprocessing_experiment(config, task, X, y, cv, models=None):
             candidate_id = len(rows) + 1
             candidate_config = copy.deepcopy(config)
             candidate_config["preprocessing"] = settings
+            candidate_config[task].pop("preprocessing", None)  # the candidate is complete; no task override
             model_config = {"type": name, **task_config["models"][name]}
             identifiers = {"candidate": candidate_id, "task": task, "model": name}
             for key, default in zip(_COMPONENTS, ("standard", "median", "constant", "onehot")):
@@ -88,6 +89,11 @@ def run_preprocessing_experiment(config, task, X, y, cv, models=None):
             started = time.perf_counter()
             try:
                 pipeline = build_pipeline(task, candidate_config, model_config)
+                if "select" in pipeline.named_steps:
+                    # Same feature selection for every candidate: the selector's probe keeps the current
+                    # preprocessing, so only the model's own "prep" step varies and each fold's selection is
+                    # computed once and cached.
+                    pipeline.set_params(select__preprocessing=task_preprocessing(config, task))
                 folds = cross_validate_pipeline(pipeline, X, y, FixedCV(), task, task_config)
                 if not np.isfinite(folds[task_config["metrics"]].to_numpy()).all():
                     raise ValueError("Cross-validation returned non-finite metrics")

@@ -272,8 +272,14 @@ XGBoost, LightGBM, CatBoost), all four commands, integration tests, reproducibil
 
 | Task | Model | CV (5 folds) | Floor | Hold-out |
 |---|---|---|---|---|
-| Classification (F1) | random forest | 0.748 ± 0.019 | 0.712 | 0.774 (floor 0.753), ROC-AUC 0.811 |
-| Regression (RMSE, EUR) | random forest | 1,974 ± 122 | 2,472 | 2,501 (floor 3,289), MAE 1,298, R² 0.41 |
+| Classification (F1) | random forest | 0.742 ± 0.018 | 0.712 | 0.771 (floor 0.753), ROC-AUC 0.808 |
+| Regression (RMSE, EUR) | random forest | 1,975 ± 123 | 2,472 | 2,501 (floor 3,289), MAE 1,298, R² 0.42 |
+
+Preprocessing (25 Nov 2026): `robust` scaler, `median` imputer, `constant` for missing categories; encoder `ordinal`
+for classification and `onehot` for regression (`regression.preprocessing` overrides the shared settings). The
+grid (`experiment`, random forest, same per-fold selection for every candidate) put all 24 classification setups
+within 0.007 F1 of each other (noise), while for regression one-hot beat ordinal in every fold, by 43 EUR on average.
+With one-hot everywhere, classification CV was 0.748: also within noise of 0.742.
 
 Engineered features (19 Nov 2026): recency (`overdue_ratio`, `purchase_rate`), trend (`spend_trend_90d`,
 `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`, `shipping_rate`.

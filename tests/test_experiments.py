@@ -40,6 +40,37 @@ class PreprocessingExperimentsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-empty list"):
             preprocessing_candidates(self.config)
 
+    def test_task_preprocessing_overrides_shared_settings(self):
+        from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
+        from src.model import build_pipeline
+        self.config["preprocessing"]["encoder"] = "ordinal"
+        self.config["classification"].pop("preprocessing", None)
+        self.config["regression"]["preprocessing"] = {"encoder": "onehot"}
+        for task, name, encoder in (("classification", "ordinal", OrdinalEncoder),
+                                    ("regression", "onehot", OneHotEncoder)):
+            pipeline = build_pipeline(task, self.config, {"type": "random_forest"})
+            categorical = pipeline.named_steps["prep"].transformers[0][1]
+            self.assertIsInstance(categorical.named_steps["encode"], encoder)
+            self.assertEqual(pipeline.named_steps["select"].preprocessing["encoder"], name)
+        self.assertEqual(preprocessing_candidates(self.config, "regression")[0]["encoder"], "onehot")
+
+    def test_feature_selection_is_shared_by_every_candidate(self):
+        self.config["classification"]["model"] = "random_forest"
+        seen = []
+
+        def score(pipeline, X, y, cv, task, task_config):
+            params = pipeline.get_params()
+            seen.append((params["select__preprocessing"], params["prep__remainder__scale"]))
+            return pd.DataFrame({"f1": [0.5, 0.5], "validation": [0.5, 0.5], "gap": [0., 0.], "fold": [1, 2],
+                                 **{m: [0.5, 0.5] for m in self.config["classification"]["metrics"]}})
+
+        X = pd.DataFrame({"unused": range(6)})
+        cv = type("CV", (), {"split": lambda self, X: iter([([0, 1], [2, 3]), ([0, 1, 2], [4, 5])])})()
+        with patch("src.experiments.cross_validate_pipeline", side_effect=score), redirect_stdout(io.StringIO()):
+            run_preprocessing_experiment(self.config, "classification", X, X["unused"], cv)
+        self.assertTrue(all(select == self.config["preprocessing"] for select, _ in seen))
+        self.assertGreater(len({repr(scale) for _, scale in seen}), 1)  # the model's own preprocessing does vary
+
     def test_ranking_errors_identical_splits_and_csv_columns(self):
         class CV:
             calls = 0
