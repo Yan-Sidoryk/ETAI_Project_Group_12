@@ -190,6 +190,13 @@ Kaggle (public leaderboard): 0.809 at threshold 0.5, 0.799 at 0.41.
 **Engineered features** (19 Nov 2026, `add_features()`): recency (`overdue_ratio`, `purchase_rate`), trend
 (`spend_trend_90d`, `count_trend_90d`), `value_vs_usual`, `margin_rate`, `discount_rate`, `value_per_line`,
 `shipping_rate`. A zero denominator gives a missing value.
+Added 26 Nov 2026: non-overlapping windows (`spend_30_90d`, `spend_90_180d`, `spend_180_365d` and the same three
+for `purchase_count`), because the nested rolling windows are near-copies that the collinearity step collapses, plus
+`gap_regularity`, `value_variability`, `recent_share`, `days_overdue`, `tax_rate` (definitions in
+[docs/column_descriptions.md](docs/column_descriptions.md)). All are candidates for the feature selection; every one
+except `purchase_count_30_90d` was kept in at least one task. CV on the development folds: classification
+(random forest) 0.752 -> 0.752, regression (`lightgbm_tuned`) 1,955 -> 1,932 EUR (p 0.55, within fold noise).
+`spend_180_365d` ranks in the top 4 for both tasks. The feature counts and selection figures below predate them.
 
 **Feature selection** (25 Nov 2026), per fold and per task (`feature_selection` in `config.yaml`). Choosing a drop list
 on the development rows (notebook 02, 24 Nov) was leakage, because CV then validated on rows that helped choose the

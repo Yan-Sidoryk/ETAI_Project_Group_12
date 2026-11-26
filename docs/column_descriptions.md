@@ -125,6 +125,42 @@ Geography, address and company fields use anonymized labels. Geographic descript
 | `company_name`        | Category / text    | Anonymized company name; 1,141 distinct values, so it is almost customer-specific.                                                                                                        |               0 |
 | `customer_since_year` | Integer year       | Year the customer relationship began, as indicated by the field name. Observed values span 2015–2026; the brief does not specify whether this means registration or first purchase.       |               0 |
 
+## Engineered features (`add_features()` in `src/features.py`)
+
+Computed row by row from the cleaned purchase columns, learning nothing from the data, so they are identical in
+training, batch prediction and the client. A ratio with a zero or missing denominator is missing (left to the pipeline
+imputer). Not raw columns: they do not appear in the CSVs.
+
+| Column                    | Formula                                                     | Description                                                                                       |
+| ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `is_first_purchase`       | `prior_purchase_count == 0`                                 | 1 for a customer's first recorded purchase.                                                       |
+| `purchase_month`          | month of `purchase_date`                                    | Calendar month (1-12), for seasonality.                                                           |
+| `overdue_ratio`           | `days_since_previous_purchase / prior_mean_gap_days`        | How late this purchase is relative to the customer's usual gap (>1 = later than usual).          |
+| `purchase_rate`           | `prior_purchase_count / customer_tenure_days`               | Purchases per day of tenure.                                                                      |
+| `spend_trend_90d`         | `spend_90d * 4 / spend_365d`                                | Last quarter's spend against the average quarter of the last year (>1 = growing).                |
+| `count_trend_90d`         | `purchase_count_90d / purchase_count_365d`                  | Share of the last year's purchases made in the last 90 days.                                      |
+| `value_vs_usual`          | `Total a Pagar / prior_mean_purchase_value`                 | Current purchase against the customer's average purchase.                                         |
+| `margin_rate`             | `(Total Liquido - Custo) / Total Liquido`                   | Gross margin of the current purchase.                                                             |
+| `discount_rate`           | `(Total Desc_ Global + Total Desc_ Linha) / Total Bruto`    | Share of the gross amount given as discount.                                                      |
+| `value_per_line`          | `Total Liquido / N_ Detalhes`                               | Net value per detail line.                                                                        |
+| `shipping_rate`           | `Total Portes / Total Liquido`                              | Shipping charge relative to the net amount.                                                       |
+| `spend_30_90d`            | `spend_90d - spend_30d`                                     | Spend between 30 and 90 days before the purchase (non-overlapping window).                        |
+| `spend_90_180d`           | `spend_180d - spend_90d`                                    | Spend between 90 and 180 days before the purchase.                                                |
+| `spend_180_365d`          | `spend_365d - spend_180d`                                   | Spend between 180 and 365 days before the purchase.                                               |
+| `purchase_count_30_90d`   | `purchase_count_90d - purchase_count_30d`                   | Purchases between 30 and 90 days before the purchase.                                             |
+| `purchase_count_90_180d`  | `purchase_count_180d - purchase_count_90d`                  | Purchases between 90 and 180 days before the purchase.                                            |
+| `purchase_count_180_365d` | `purchase_count_365d - purchase_count_180d`                 | Purchases between 180 and 365 days before the purchase.                                           |
+| `gap_regularity`          | `prior_std_gap_days / prior_mean_gap_days`                  | Coefficient of variation of the gaps between purchases (low = buys at a regular rhythm).          |
+| `value_variability`       | `prior_std_purchase_value / prior_mean_purchase_value`      | Coefficient of variation of past purchase values (low = similar order sizes).                     |
+| `recent_share`            | `spend_365d / prior_total_spend`                            | Share of lifetime spend made in the last year (high = recent or growing customer).               |
+| `days_overdue`            | `days_since_previous_purchase - prior_mean_gap_days`        | Days later (positive) or earlier (negative) than the customer's usual gap.                        |
+| `tax_rate`                | `Total Imp_ / Total Liquido`                                | Effective tax rate of the purchase; may separate tax-exempt or export customers.                  |
+
+The non-overlapping windows exist because the rolling windows are nested (30d within 90d within 180d within 365d), so
+the raw windows are strongly correlated and the feature selection keeps only one per family. All window differences
+are candidates; the feature selection decides per fold (26 Nov 2026: `purchase_count_30_90d` was dropped in both tasks,
+as a near-copy of `spend_30_90d` for classification and without signal for regression).
+
 ## Submission columns (`sample_submission.csv`)
 
 | Column                | Logical type       | Description                                                                                                                          | Missing / 986 |

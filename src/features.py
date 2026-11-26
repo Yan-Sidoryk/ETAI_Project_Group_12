@@ -52,6 +52,20 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["discount_rate"] = ratio(out["Total Desc_ Global"] + out["Total Desc_ Linha"], out["Total Bruto"])
     out["value_per_line"] = ratio(out["Total Liquido"], out["N_ Detalhes"])
     out["shipping_rate"] = ratio(out["Total Portes"], out["Total Liquido"])
+    # Non-overlapping windows: the rolling windows are nested (30d in 90d in 180d in 365d), so they are
+    # strongly correlated; the differences isolate each period.
+    out["spend_30_90d"] = out["spend_90d"] - out["spend_30d"]
+    out["spend_90_180d"] = out["spend_180d"] - out["spend_90d"]
+    out["spend_180_365d"] = out["spend_365d"] - out["spend_180d"]
+    out["purchase_count_30_90d"] = out["purchase_count_90d"] - out["purchase_count_30d"]
+    out["purchase_count_90_180d"] = out["purchase_count_180d"] - out["purchase_count_90d"]
+    out["purchase_count_180_365d"] = out["purchase_count_365d"] - out["purchase_count_180d"]
+    # Customer behaviour
+    out["gap_regularity"] = ratio(out["prior_std_gap_days"], out["prior_mean_gap_days"])
+    out["value_variability"] = ratio(out["prior_std_purchase_value"], out["prior_mean_purchase_value"])
+    out["recent_share"] = ratio(out["spend_365d"], out["prior_total_spend"])
+    out["days_overdue"] = out["days_since_previous_purchase"] - out["prior_mean_gap_days"]
+    out["tax_rate"] = ratio(out["Total Imp_"], out["Total Liquido"])
     return out
 
 
